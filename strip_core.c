@@ -533,7 +533,7 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst)
  */
 static size_t
 html_copy_tag(const unsigned char *src, size_t len, size_t i,
-              unsigned char *dst, size_t *op)
+              unsigned char *dst, size_t *op, int allow_unquote)
 {
     size_t o = *op;
 
@@ -610,14 +610,44 @@ html_copy_tag(const unsigned char *src, size_t len, size_t i,
             continue;
         }
 
-        /* not boolean — emit ="value" */
-        dst[o++] = '=';
-        dst[o++] = q;
+        /* A value can drop its quotes (HTML5 unquoted-attr syntax) only when
+         * it is non-empty and contains none of the bytes that would end or
+         * mis-parse an unquoted value: whitespace, quote, backtick, < > =.
+         * Otherwise emit it quoted verbatim. */
         size_t v;
+        /* Unquoting is an HTML-only transform: XML/SVG syntax requires every
+         * attribute value to stay quoted. */
+        int can_unquote = allow_unquote && (val_len > 0);
+        /* An unquoted value ends only at whitespace or '>'. The closing quote
+         * in the source may be directly followed by another attribute
+         * (href="x"id=y) or a self-closing slash (src="a"/>); dropping the
+         * quotes there would merge tokens (href=xid=y) or absorb the slash
+         * (src=a/). Only unquote when the next byte is a clean boundary:
+         * whitespace or '>'. src[i] is the byte past the closing quote. */
+        if (can_unquote
+            && !(i >= len || sc_is_space(src[i]) || src[i] == '>'))
+        {
+            can_unquote = 0;
+        }
+        for (v = val_start; can_unquote && v < val_start + val_len; v++) {
+            unsigned char vc = src[v];
+            if (sc_is_space(vc) || vc == '"' || vc == '\'' || vc == '`'
+                || vc == '<' || vc == '>' || vc == '=')
+            {
+                can_unquote = 0;
+            }
+        }
+
+        dst[o++] = '=';
+        if (!can_unquote) {
+            dst[o++] = q;
+        }
         for (v = val_start; v < val_start + val_len; v++) {
             dst[o++] = src[v];
         }
-        dst[o++] = q;
+        if (!can_unquote) {
+            dst[o++] = q;
+        }
     }
 
     /* emit closing '>' */
@@ -719,8 +749,9 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst)
                 }
             }
 
-            /* copy the tag, collapsing boolean attrs */
-            size_t next_i = html_copy_tag(src, len, i, dst, &o);
+            /* copy the tag, collapsing boolean attrs and unquoting safe
+             * values (HTML allows unquoted attribute values) */
+            size_t next_i = html_copy_tag(src, len, i, dst, &o, 1);
             i = next_i - 1; /* loop ++ will re-advance */
 
             if (matched >= 0) {
@@ -813,8 +844,9 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst)
                 continue;
             }
 
-            /* regular tag: copy using html_copy_tag for boolean attr collapse */
-            size_t next_i = html_copy_tag(src, len, i, dst, &o);
+            /* regular tag: copy using html_copy_tag for boolean attr collapse.
+             * allow_unquote=0 — XML/SVG attribute values must stay quoted. */
+            size_t next_i = html_copy_tag(src, len, i, dst, &o, 0);
             i = next_i - 1;
             continue;
         }

@@ -301,14 +301,14 @@ GET /
 --- no_error_log
 [error]
 
-=== TEST 25: HTML non-boolean attribute not collapsed
+=== TEST 25: HTML non-boolean attribute not collapsed (but unquoted)
 --- config
     strip on;
     return 200 '<input type="text" value="hello">';
     default_type text/html;
 --- request
 GET /
---- response_body: <input type="text" value="hello">
+--- response_body: <input type=text value=hello>
 --- no_error_log
 [error]
 
@@ -505,5 +505,82 @@ GET /
 --- request
 GET /
 --- response_body: { "a" : 1 }
+--- no_error_log
+[error]
+
+=== TEST 42: HTML safe attr value unquoted
+--- config
+    strip on;
+    return 200 '<a href="page" class="btn">x</a>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <a href=page class=btn>x</a>
+--- no_error_log
+[error]
+
+=== TEST 43: HTML attr value with space keeps quotes
+--- config
+    strip on;
+    return 200 '<a class="a b">x</a>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <a class="a b">x</a>
+--- no_error_log
+[error]
+
+=== TEST 44: HTML empty attr value keeps quotes
+--- config
+    strip on;
+    return 200 '<input value="">';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <input value="">
+--- no_error_log
+[error]
+
+=== TEST 45: HTML unquote skipped before self-closing slash
+--- config
+    strip on;
+    return 200 '<img src="a.png"/>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <img src="a.png"/>
+--- no_error_log
+[error]
+
+=== TEST 46: HTML attr value with > keeps quotes
+--- config
+    strip on;
+    return 200 '<a data-x="a>b">y</a>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <a data-x="a>b">y</a>
+--- no_error_log
+[error]
+
+=== TEST 47: HTML adjacent attrs after quote keep quotes (no merge)
+--- config
+    strip on;
+    return 200 '<a href="x"id="y">z</a>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <a href="x"id=y>z</a>
+--- no_error_log
+[error]
+
+=== TEST 48: HTML boolean collapse still works alongside unquote
+--- config
+    strip on;
+    return 200 '<input type="text" disabled="disabled" name="q">';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <input type=text disabled name=q>
 --- no_error_log
 [error]

@@ -21,7 +21,8 @@ typedef enum {
     STRIP_CSS,
     STRIP_JS,
     STRIP_JSON,
-    STRIP_SVG
+    STRIP_SVG,
+    STRIP_XML
 } strip_kind_t;
 
 /*

@@ -1,0 +1,31 @@
+# Valgrind suppressions for nginx internals that are not module bugs.
+
+# nginx slab allocator deliberately leaves memory unfreed at fast shutdown.
+{
+   nginx_slab_alloc
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   ...
+   fun:ngx_alloc
+}
+
+# nginx pool is never freed during the master-process exit path.
+{
+   nginx_pool_create
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   fun:malloc
+   ...
+   fun:ngx_create_pool
+}
+
+# OpenSSL internal init (pulled in by --with-http_ssl_module).
+{
+   openssl_init
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   ...
+   fun:OPENSSL_init_ssl
+}

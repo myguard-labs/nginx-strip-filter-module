@@ -1,0 +1,77 @@
+name: Fuzzing
+
+on:
+  schedule:
+    - cron: "41 3 1 * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Fuzz duration in seconds"
+        required: false
+        default: "900"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: strip_core fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install clang + libFuzzer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build fuzz targets
+        run: bash fuzz/build.sh "$GITHUB_WORKSPACE/fuzz"
+
+      - name: Select fuzz duration
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "FUZZ_SECS=120" >> "$GITHUB_ENV"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DURATION="${{ github.event.inputs.duration }}"
+            echo "FUZZ_SECS=${DURATION}" >> "$GITHUB_ENV"
+          else
+            echo "FUZZ_SECS=900" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run fuzzers
+        run: |
+          cd fuzz
+          for kind in html css js json; do
+            echo "=== fuzz_strip_${kind} (${FUZZ_SECS}s) ==="
+            set +e
+            "./fuzz_strip_${kind}" \
+              -max_total_time="$FUZZ_SECS" \
+              -print_final_stats=1 \
+              -artifact_prefix="crash-${kind}-" \
+              "corpus_${kind}/"
+            rc=$?
+            set -e
+            if [ $rc -ne 0 ]; then
+              echo "❌ fuzz_strip_${kind} found a crash (exit $rc)"
+              exit 1
+            fi
+            echo "✓ fuzz_strip_${kind}: no crashes in ${FUZZ_SECS}s"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: fuzz-crashes
+          path: fuzz/crash-*
+          retention-days: 30

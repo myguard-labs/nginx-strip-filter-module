@@ -1,0 +1,10 @@
+*.o
+*.so
+.build/
+build/
+objs/
+fuzz/fuzz_strip
+fuzz/crash-*
+fuzz/*-min/
+t/servroot/
+fuzz/corpus/*

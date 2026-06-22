@@ -1,0 +1,22 @@
+ngx_addon_name=ngx_http_strip_filter_module
+
+if test -n "$ngx_module_link"; then
+    ngx_module_type=HTTP_FILTER
+    ngx_module_name=ngx_http_strip_filter_module
+    ngx_module_srcs="$ngx_addon_dir/ngx_http_strip_filter_module.c \
+                     $ngx_addon_dir/strip_core.c"
+    ngx_module_incs="$ngx_addon_dir"
+
+    # Run the minifier BEFORE the compression filters so that gzip/brotli/zstd
+    # compress already-stripped bytes. In nginx the filter registered later
+    # executes earlier, so strip must sort ahead of the header/copy filters and
+    # ahead of gzip in the module order list.
+    . auto/module
+else
+    # legacy (pre-1.9.11) invocation
+    HTTP_FILTER_MODULES="$HTTP_FILTER_MODULES ngx_http_strip_filter_module"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS \
+                    $ngx_addon_dir/ngx_http_strip_filter_module.c \
+                    $ngx_addon_dir/strip_core.c"
+    CORE_INCS="$CORE_INCS $ngx_addon_dir"
+fi

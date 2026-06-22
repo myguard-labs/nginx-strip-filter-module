@@ -11,10 +11,12 @@ including this module for nginx and Angie.
 
 | Content type | What is stripped |
 |---|---|
-| `text/html` | `<!-- -->` comments, inter-tag whitespace/newline runs |
-| `text/css` | `/* */` comments, redundant whitespace |
+| `text/html` | `<!-- -->` comments, inter-tag whitespace/newline runs, boolean attrs (`disabled="disabled"` → `disabled`), safe attribute-value unquoting (`class="btn"` → `class=btn`) |
+| `text/css` | `/* */` comments, redundant whitespace, trailing `;` before `}`, zero units (`0px` → `0`), leading zeros (`0.5` → `.5`), 6→3-digit hex colors (`#ffaabb` → `#fab`) |
 | `application/javascript`, `text/javascript` | `//` and `/* */` comments, safe newline collapse |
 | `application/json` | all structural whitespace |
+| `image/svg+xml` | XML comments, inter-tag whitespace (CDATA preserved) |
+| `text/xml`, `application/xml`, `*+xml` | XML comments, inter-tag whitespace (CDATA preserved) — RSS/Atom/sitemap |
 
 **Smart, not brute:** regions that must survive verbatim are passed through
 untouched:
@@ -38,6 +40,8 @@ All directives are valid in `http`, `server` and `location` blocks.
 | `strip_css` | `off` | Enable CSS minification |
 | `strip_js` | `off` | Enable JavaScript minification |
 | `strip_json` | `off` | Enable JSON minification |
+| `strip_svg` | `off` | Enable SVG (`image/svg+xml`) minification |
+| `strip_xml` | `off` | Enable XML minification (`text/xml`, `application/xml`, any `+xml` subtype — RSS/Atom/sitemap) |
 | `strip_min_size` | `0` | Skip bodies smaller than this (bytes) |
 | `strip_max_size` | `10m` | Skip bodies larger than this (buffered whole) |
 | `strip_types` | `text/html` | Extra MIME types treated as HTML |
@@ -110,6 +114,9 @@ load_module modules/ngx_http_strip_filter_module.so;
 - Does not handle multi-part or chunked-encoded upstream responses that arrive
   in more than one chain beyond the last buffer — in practice nginx upstream
   modules always set `last_buf` on the final buffer of a response.
+- Attribute-value unquoting is HTML-only; SVG/XML attribute values always stay
+  quoted (XML syntax requires it). CSS `url(...)` tokens are passed through
+  verbatim (no whitespace/zero rewriting inside them).
 
 ## License
 

@@ -92,7 +92,7 @@ GET /
 --- request
 GET /
 --- response_body
-body{color:red;margin:0;}
+body{color:red;margin:0}
 --- no_error_log
 [error]
 
@@ -239,7 +239,7 @@ GET /
 --- request
 GET /
 --- response_body
-a::after{content:'  hi  ';}
+a::after{content:'  hi  '}
 --- no_error_log
 [error]
 
@@ -262,7 +262,7 @@ GET /
 --- request
 GET /
 --- response_body
-div{margin:0;padding:0;top:0;font-size:10px;}
+div{margin:0;padding:0;top:0;font-size:10px}
 --- no_error_log
 [error]
 
@@ -274,7 +274,7 @@ div{margin:0;padding:0;top:0;font-size:10px;}
 --- request
 GET /
 --- response_body
-a{color:#fab;background:#abc;border-color:#123;}
+a{color:#fab;background:#abc;border-color:#123}
 --- no_error_log
 [error]
 
@@ -286,7 +286,7 @@ a{color:#fab;background:#abc;border-color:#123;}
 --- request
 GET /
 --- response_body
-a{color:#ff00ab;}
+a{color:#ff00ab}
 --- no_error_log
 [error]
 
@@ -361,6 +361,72 @@ GET /
 --- request
 GET /
 --- response_body
-p{gap:0;width:0;height:0;}
+p{gap:0;width:0;height:0}
+--- no_error_log
+[error]
+
+=== TEST 30: CSS trailing semicolon before } dropped
+--- config
+    strip_css on;
+    return 200 "a{color:red;}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: a{color:red}
+--- no_error_log
+[error]
+
+=== TEST 31: CSS leading zero stripped (0.5 -> .5)
+--- config
+    strip_css on;
+    return 200 "a{opacity:0.5;margin:0.25em 1.5px}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: a{opacity:.5;margin:.25em 1.5px}
+--- no_error_log
+[error]
+
+=== TEST 32: CSS leading zero not stripped inside number (10.5)
+--- config
+    strip_css on;
+    return 200 "a{width:10.5px;top:100.0px}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: a{width:10.5px;top:100.0px}
+--- no_error_log
+[error]
+
+=== TEST 33: CSS url() unquoted content preserved verbatim
+--- config
+    strip_css on;
+    return 200 "a{background:url(img/0.5x logo.png)}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: a{background:url(img/0.5x logo.png)}
+--- no_error_log
+[error]
+
+=== TEST 34: CSS url() quoted content preserved verbatim
+--- config
+    strip_css on;
+    return 200 "a{background:url( \"a b.png\" )}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: a{background:url( "a b.png" )}
+--- no_error_log
+[error]
+
+=== TEST 35: CSS only-semicolon-before-close in nested rules
+--- config
+    strip_css on;
+    return 200 "@media screen{a{color:red;}b{color:blue;}}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: @media screen{a{color:red}b{color:blue}}
 --- no_error_log
 [error]

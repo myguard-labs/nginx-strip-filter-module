@@ -366,6 +366,30 @@ js_keep_newline(unsigned char prev, unsigned char next)
     return left && right;
 }
 
+/*
+ * Keywords after which a `/` begins a regex literal, not a division. After
+ * `return /re/.test(x)` the slash is a regex; a plain identifier (`a/b`) is
+ * division. We can only tell the two apart by looking at the whole trailing
+ * word, not its last byte.
+ */
+static int
+js_word_allows_regex(const unsigned char *w, size_t n)
+{
+    static const char * const kw[] = {
+        "return", "typeof", "instanceof", "in", "of", "new", "delete",
+        "void", "do", "else", "yield", "await", "case", "throw", "default",
+        NULL
+    };
+    int k;
+
+    for (k = 0; kw[k]; k++) {
+        if (strlen(kw[k]) == n && memcmp(w, kw[k], n) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Does the byte stream ending at dst[o-1] expect a regex (vs division) next? */
 static int
 js_regex_allowed(const unsigned char *dst, size_t o)
@@ -382,9 +406,23 @@ js_regex_allowed(const unsigned char *dst, size_t o)
 
     unsigned char p = dst[k - 1];
 
-    /* after a value/identifier/closing bracket, `/` is division */
-    if (sc_is_word(p) || p == ')' || p == ']' || p == '}' || p == '"'
-        || p == '\'' || p == '`')
+    /* after a value/closing bracket, `/` is division. After a bare word it is
+     * usually division (a/b) — UNLESS the word is a keyword like `return` or
+     * `typeof`, after which a regex is expected. */
+    if (sc_is_word(p)) {
+        size_t e = k;
+        while (k > 0 && sc_is_word(dst[k - 1])) {
+            k--;
+        }
+        /* dst[k..e) is the trailing identifier/keyword; reject if the byte
+         * before it is part of a member access (foo.return is a property). */
+        if (k > 0 && dst[k - 1] == '.') {
+            return 0;
+        }
+        return js_word_allows_regex(dst + k, e - k);
+    }
+
+    if (p == ')' || p == ']' || p == '}' || p == '"' || p == '\'' || p == '`')
     {
         return 0;
     }
@@ -523,13 +561,40 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst)
 /* ---- HTML -------------------------------------------------------------- */
 
 /*
+ * True if `name` (length n, case-insensitive) is one of the HTML5 boolean
+ * attributes whose presence alone is meaningful, so `attr="attr"` can be
+ * collapsed to `attr` without changing semantics. A generic value==name
+ * match is NOT safe: e.g. id="id", class="class", title="title" are ordinary
+ * string attributes whose value must be preserved.
+ */
+static int
+html_is_boolean_attr(const unsigned char *name, size_t n)
+{
+    static const char * const battrs[] = {
+        "allowfullscreen", "async", "autofocus", "autoplay", "checked",
+        "controls", "default", "defer", "disabled", "formnovalidate",
+        "hidden", "ismap", "itemscope", "loop", "multiple", "muted",
+        "nomodule", "novalidate", "open", "playsinline", "readonly",
+        "required", "reversed", "selected", NULL
+    };
+    int k;
+
+    for (k = 0; battrs[k]; k++) {
+        if (strlen(battrs[k]) == n && sc_ci_eq(name, n, battrs[k])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
  * Copy a tag from src[i] (pointing at '<') up to and including '>',
  * collapsing boolean attributes of the form attr="attr" or attr='attr'
  * to just attr. Returns new i (past '>').
  *
  * We parse at byte level: tag name, then attr tokens.
  * We only collapse when the quoted value is an exact case-sensitive match
- * of the attribute name (HTML5 boolean attribute contract).
+ * of the attribute name AND the name is an HTML5 boolean attribute.
  */
 static size_t
 html_copy_tag(const unsigned char *src, size_t len, size_t i,
@@ -599,12 +664,34 @@ html_copy_tag(const unsigned char *src, size_t len, size_t i,
             i++;
         }
         size_t val_len = i - val_start;
-        if (i < len) {
+        int    had_close = (i < len);   /* a closing quote was actually seen */
+        if (had_close) {
             i++; /* skip closing quote */
         }
 
-        if (val_len == name_len
-            && memcmp(src + val_start, dst + name_start, name_len) == 0)
+        /* Unterminated quoted value (input ran out before the closing quote):
+         * emit the bytes verbatim, opening quote included, NO synthesized
+         * closing quote. Synthesizing one would make the output longer than
+         * the input and break the output<=input invariant the caller relies
+         * on for buffer sizing (heap overflow). */
+        if (!had_close) {
+            size_t v;
+            dst[o++] = '=';
+            dst[o++] = q;
+            for (v = val_start; v < val_start + val_len; v++) {
+                dst[o++] = src[v];
+            }
+            break; /* reached end of input mid-attribute */
+        }
+
+        /* Collapse attr="attr" → attr only for genuine HTML5 boolean
+         * attributes (allow_unquote gates HTML vs XML/SVG; XML/SVG have no
+         * boolean-attr concept and must keep the value). id="id" / class=
+         * "class" are NOT boolean and must survive. */
+        if (allow_unquote
+            && val_len == name_len
+            && memcmp(src + val_start, dst + name_start, name_len) == 0
+            && html_is_boolean_attr(dst + name_start, name_len))
         {
             /* boolean attr — already emitted the name, skip ="value" */
             continue;
@@ -768,9 +855,12 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst)
         }
 
         if (pending_space) {
-            /* collapse the run to a single space between text and the next
-             * non-space; drop it entirely right after a tag close */
-            if (o > 0 && dst[o - 1] != '>') {
+            /* Collapse the run to a single space. Whitespace immediately after
+             * a tag close ('>') is only insignificant when the next thing is
+             * another tag ('<') — i.e. pure inter-tag whitespace. When text
+             * follows ("</span> world"), the space is meaningful and must be
+             * kept, otherwise inline elements get glued to the next word. */
+            if (o > 0 && !(dst[o - 1] == '>' && c == '<')) {
                 dst[o++] = ' ';
             }
             pending_space = 0;
@@ -857,7 +947,10 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst)
         }
 
         if (pending_space) {
-            if (o > 0 && dst[o - 1] != '>') {
+            /* Same rule as HTML: only inter-tag whitespace ('>' … '<') is
+             * safe to drop. XML/SVG text nodes are whitespace-sensitive, so a
+             * space between '>' and text content is preserved. */
+            if (o > 0 && !(dst[o - 1] == '>' && c == '<')) {
                 dst[o++] = ' ';
             }
             pending_space = 0;

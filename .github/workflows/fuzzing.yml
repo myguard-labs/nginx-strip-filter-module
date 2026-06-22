@@ -51,7 +51,7 @@ jobs:
       - name: Run fuzzers
         run: |
           cd fuzz
-          for kind in html css js json; do
+          for kind in html css js json svg xml; do
             echo "=== fuzz_strip_${kind} (${FUZZ_SECS}s) ==="
             set +e
             "./fuzz_strip_${kind}" \

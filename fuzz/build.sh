@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the four strip_core libFuzzer targets.
+# Build the six strip_core libFuzzer targets.
 # Usage: bash fuzz/build.sh [fuzz-dir]
 set -euo pipefail
 
@@ -17,9 +17,11 @@ declare -A KINDS=(
     [css]=1
     [js]=2
     [json]=3
+    [svg]=4
+    [xml]=5
 )
 
-for name in html css js json; do
+for name in html css js json svg xml; do
     kind="${KINDS[$name]}"
     echo "building fuzz_strip_${name} (FUZZ_KIND=${kind})..."
     mkdir -p "$FUZZ_DIR/corpus_${name}"

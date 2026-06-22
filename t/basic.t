@@ -584,3 +584,107 @@ GET /
 --- response_body chomp: <input type=text disabled name=q>
 --- no_error_log
 [error]
+
+
+
+=== TEST 49: non-boolean attr value==name is NOT collapsed
+--- config
+    strip on;
+    return 200 '<div id="id" class="class">x</div>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <div id=id class=class>x</div>
+--- no_error_log
+[error]
+
+
+
+=== TEST 50: whitespace between inline element and text is preserved
+--- config
+    strip on;
+    return 200 "<span>Hello</span> world";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <span>Hello</span> world
+--- no_error_log
+[error]
+
+
+
+=== TEST 51: pure inter-tag whitespace is still dropped
+--- config
+    strip on;
+    return 200 "<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <ul><li>a</li><li>b</li></ul>
+--- no_error_log
+[error]
+
+
+
+=== TEST 52: unterminated quoted attr does not synthesize a closing quote
+--- config
+    strip on;
+    return 200 '<x a="bc';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <x a="bc
+--- no_error_log
+[error]
+
+
+
+=== TEST 53: JS regex after return keyword keeps the slash as regex
+--- config
+    strip_js on;
+    return 200 "function f(x){\n  return /a b/.test(x);\n}";
+    default_type application/javascript;
+--- request
+GET /
+--- response_body chomp: function f(x){return /a b/.test(x);}
+--- no_error_log
+[error]
+
+
+
+=== TEST 54: JS division after identifier stays division (no false regex)
+--- config
+    strip_js on;
+    return 200 "var y = a / b / c;";
+    default_type application/javascript;
+--- request
+GET /
+--- response_body chomp: var y=a/b/c;
+--- no_error_log
+[error]
+
+
+
+=== TEST 55: XML text whitespace inside a tag is preserved
+--- config
+    strip_xml on;
+    return 200 '<title>Hello world</title>';
+    default_type application/xml;
+--- request
+GET /
+--- response_body chomp: <title>Hello world</title>
+--- no_error_log
+[error]
+
+
+
+=== TEST 56: SVG/XML attr value==name is not collapsed (no boolean attrs)
+--- config
+    strip_svg on;
+    return 200 '<rect fill="fill"/>';
+    default_type image/svg+xml;
+--- request
+GET /
+--- response_body chomp: <rect fill="fill"/>
+--- no_error_log
+[error]

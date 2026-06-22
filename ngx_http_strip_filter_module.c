@@ -53,6 +53,8 @@ typedef struct {
     size_t        len;         /* bytes buffered so far   */
     unsigned      buffering:1; /* still collecting        */
     unsigned      done:1;      /* emitted / bypassed      */
+    unsigned      last_buf:1;      /* saw a last_buf buffer      */
+    unsigned      last_in_chain:1; /* saw a last_in_chain buffer */
 } ngx_http_strip_ctx_t;
 
 
@@ -282,8 +284,18 @@ ngx_http_strip_header_filter(ngx_http_request_t *r)
         || r->headers_out.status < NGX_HTTP_OK
         || (r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE
             && r->headers_out.status != NGX_HTTP_INTERNAL_SERVER_ERROR)
+        || r->headers_out.status == NGX_HTTP_PARTIAL_CONTENT
         || r->headers_out.content_length_n == 0
         || r != r->main)
+    {
+        return ngx_http_next_header_filter(r);
+    }
+
+    /* A non-identity Content-Encoding means the body bytes are compressed
+     * (gzip/br/zstd) or otherwise encoded — minifying them would corrupt the
+     * stream. Leave encoded responses untouched. */
+    if (r->headers_out.content_encoding
+        && r->headers_out.content_encoding->value.len)
     {
         return ngx_http_next_header_filter(r);
     }
@@ -331,9 +343,25 @@ ngx_http_strip_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     for (cl = in; cl; cl = cl->next) {
         ngx_chain_t  *nl;
         ngx_buf_t    *b = cl->buf;
+        off_t         n = ngx_buf_size(b);
 
-        if (ngx_buf_size(b) > 0) {
-            ctx->len += ngx_buf_size(b);
+        /* A buffer whose data is NOT in memory (file-backed, e.g. served from
+         * cache or sendfile) cannot be coalesced via b->pos. Don't try to
+         * minify such a body — stop buffering and flush what we have, then let
+         * the remaining chain pass through untouched. */
+        if (n > 0 && !ngx_buf_in_memory(b)) {
+            ctx->buffering = 0;
+        }
+
+        if (n > 0 && ctx->buffering) {
+            /* Stop buffering once the body would exceed max_size. The
+             * subtraction is overflow-safe because ctx->len <= max_size is an
+             * invariant maintained here (we never add past the cap). */
+            if ((size_t) n > slcf->max_size - ctx->len) {
+                ctx->buffering = 0;
+            } else {
+                ctx->len += (size_t) n;
+            }
         }
 
         nl = ngx_alloc_chain_link(r->pool);
@@ -345,19 +373,22 @@ ngx_http_strip_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         *ctx->last_in = nl;
         ctx->last_in = &nl->next;
 
-        if (b->last_buf || b->last_in_chain) {
+        /* Track the real terminal flags so we can reproduce them exactly on
+         * the emitted buffer (a main-request body ends on last_buf; a
+         * subrequest body ends on last_in_chain). */
+        if (b->last_buf) {
+            ctx->last_buf = 1;
             last = 1;
         }
-
-        /* bail out of buffering if the body grew past the cap */
-        if (ctx->len > slcf->max_size) {
-            ctx->buffering = 0;
+        if (b->last_in_chain) {
+            ctx->last_in_chain = 1;
+            last = 1;
         }
     }
 
     if (!last && ctx->buffering) {
-        /* keep collecting; produce no output yet */
-        return NGX_AGAIN;
+        /* hold the chain; nothing to emit downstream yet */
+        return NGX_OK;
     }
 
     if (!ctx->buffering || ctx->len < slcf->min_size) {
@@ -389,7 +420,9 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
     p = src;
     for (cl = ctx->in; cl; cl = cl->next) {
         size_t n = ngx_buf_size(cl->buf);
-        if (n > 0) {
+        /* only in-memory buffers reach here (the body filter stops buffering
+         * on the first file-backed buffer); guard anyway against pos misuse */
+        if (n > 0 && ngx_buf_in_memory(cl->buf)) {
             ngx_memcpy(p, cl->buf->pos, n);
             p += n;
         }
@@ -411,8 +444,9 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
     b->pos = dst;
     b->last = dst + outlen;
     b->memory = (outlen > 0) ? 1 : 0;
-    b->last_buf = 1;
-    b->last_in_chain = 1;
+    /* reproduce exactly the terminal flags we observed on the input chain */
+    b->last_buf = ctx->last_buf;
+    b->last_in_chain = ctx->last_in_chain;
     b->sync = (outlen == 0) ? 1 : 0;
 
     out = ngx_alloc_chain_link(r->pool);

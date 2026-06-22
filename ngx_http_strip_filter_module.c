@@ -19,6 +19,7 @@
  *   strip_js       on|off;      minify standalone JavaScript responses
  *   strip_json     on|off;      minify application/json responses
  *   strip_svg      on|off;      minify image/svg+xml responses
+ *   strip_xml      on|off;      minify XML responses (RSS/Atom/sitemap, +xml)
  *   strip_min_size <size>;      skip bodies smaller than this (default 0)
  *   strip_max_size <size>;      skip bodies larger than this (default 10m)
  *   strip_types    <mime> ...;  extra HTML-treated MIME types
@@ -37,6 +38,7 @@ typedef struct {
     ngx_flag_t   js;           /* strip_js                */
     ngx_flag_t   json;         /* strip_json              */
     ngx_flag_t   svg;          /* strip_svg               */
+    ngx_flag_t   xml;          /* strip_xml               */
     size_t       min_size;     /* strip_min_size          */
     size_t       max_size;     /* strip_max_size          */
     ngx_hash_t   types;        /* extra HTML MIME types   */
@@ -107,6 +109,13 @@ static ngx_command_t  ngx_http_strip_filter_commands[] = {
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_strip_loc_conf_t, svg),
+      NULL },
+
+    { ngx_string("strip_xml"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_strip_loc_conf_t, xml),
       NULL },
 
     { ngx_string("strip_min_size"),
@@ -219,6 +228,29 @@ ngx_http_strip_select(ngx_http_request_t *r, ngx_http_strip_loc_conf_t *slcf,
         return 1;
     }
 
+    if (slcf->xml) {
+        /* match text/xml, application/xml, and any structured-syntax
+         * +xml subtype (application/rss+xml, application/atom+xml, …).
+         * Consider only the media-type token, before any ; charset= part. */
+        size_t mt = 0;
+        while (mt < ct.len && ct.data[mt] != ';' && ct.data[mt] != ' ') {
+            mt++;
+        }
+
+        if ((mt == sizeof("text/xml") - 1
+             && ngx_strncasecmp(ct.data, (u_char *) "text/xml", mt) == 0)
+            || (mt == sizeof("application/xml") - 1
+                && ngx_strncasecmp(ct.data, (u_char *) "application/xml",
+                                   mt) == 0)
+            || (mt >= sizeof("+xml") - 1
+                && ngx_strncasecmp(ct.data + mt - (sizeof("+xml") - 1),
+                                   (u_char *) "+xml", sizeof("+xml") - 1) == 0))
+        {
+            *kind = STRIP_XML;
+            return 1;
+        }
+    }
+
     if (slcf->enable
         && ngx_http_test_content_type(r, &slcf->types) != NULL)
     {
@@ -239,7 +271,9 @@ ngx_http_strip_header_filter(ngx_http_request_t *r)
 
     slcf = ngx_http_get_module_loc_conf(r, ngx_http_strip_filter_module);
 
-    if (!slcf->enable && !slcf->css && !slcf->js && !slcf->json && !slcf->svg) {
+    if (!slcf->enable && !slcf->css && !slcf->js && !slcf->json && !slcf->svg
+        && !slcf->xml)
+    {
         return ngx_http_next_header_filter(r);
     }
 
@@ -410,6 +444,7 @@ ngx_http_strip_create_loc_conf(ngx_conf_t *cf)
     slcf->js       = NGX_CONF_UNSET;
     slcf->json     = NGX_CONF_UNSET;
     slcf->svg      = NGX_CONF_UNSET;
+    slcf->xml      = NGX_CONF_UNSET;
     slcf->min_size = NGX_CONF_UNSET_SIZE;
     slcf->max_size = NGX_CONF_UNSET_SIZE;
 
@@ -428,6 +463,7 @@ ngx_http_strip_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->js, prev->js, 0);
     ngx_conf_merge_value(conf->json, prev->json, 0);
     ngx_conf_merge_value(conf->svg, prev->svg, 0);
+    ngx_conf_merge_value(conf->xml, prev->xml, 0);
     ngx_conf_merge_size_value(conf->min_size, prev->min_size, 0);
     ngx_conf_merge_size_value(conf->max_size, prev->max_size,
                               10 * 1024 * 1024);

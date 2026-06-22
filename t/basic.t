@@ -430,3 +430,80 @@ GET /
 --- response_body chomp: @media screen{a{color:red}b{color:blue}}
 --- no_error_log
 [error]
+
+=== TEST 36: XML (application/xml) comment + whitespace stripped
+--- config
+    strip_xml on;
+    return 200 '<?xml version="1.0"?>
+<root>
+  <!-- c -->
+  <item>x</item>
+</root>
+';
+    default_type application/xml;
+--- request
+GET /
+--- response_body
+<?xml version="1.0"?><root><item>x</item></root>
+--- no_error_log
+[error]
+
+=== TEST 37: RSS (application/rss+xml) matched via +xml suffix
+--- config
+    strip_xml on;
+    return 200 '<rss>
+  <channel>
+    <title>T</title>
+  </channel>
+</rss>
+';
+    default_type application/rss+xml;
+--- request
+GET /
+--- response_body
+<rss><channel><title>T</title></channel></rss>
+--- no_error_log
+[error]
+
+=== TEST 38: XML CDATA preserved verbatim
+--- config
+    strip_xml on;
+    return 200 '<item><![CDATA[  keep   me  ]]></item>';
+    default_type text/xml;
+--- request
+GET /
+--- response_body chomp: <item><![CDATA[  keep   me  ]]></item>
+--- no_error_log
+[error]
+
+=== TEST 39: strip_xml matches +xml with charset parameter
+--- config
+    strip_xml on;
+    return 200 '<a>  <b/>  </a>';
+    default_type "application/atom+xml; charset=utf-8";
+--- request
+GET /
+--- response_body chomp: <a><b/></a>
+--- no_error_log
+[error]
+
+=== TEST 40: strip_xml off by default — no transform
+--- config
+    return 200 '<root>  <!-- x -->  <a/></root>';
+    default_type application/xml;
+--- request
+GET /
+--- response_body: <root>  <!-- x -->  <a/></root>
+--- no_error_log
+[error]
+
+=== TEST 41: strip_xml does not touch JSON content-type
+--- config
+    strip_xml on;
+    return 200 '{ "a" : 1 }';
+    default_type application/json;
+--- request
+GET /
+--- response_body: { "a" : 1 }
+--- no_error_log
+[error]

@@ -856,6 +856,9 @@ strip_minify(strip_kind_t kind, const unsigned char *src, size_t len,
         n = strip_js(src, len, dst);
         break;
     case STRIP_SVG:
+    case STRIP_XML:
+        /* SVG and generic XML (RSS/Atom/sitemap) share one minifier: strip
+         * comments, pass CDATA verbatim, collapse inter-tag whitespace. */
         n = strip_svg(src, len, dst);
         break;
     case STRIP_HTML:

@@ -4,8 +4,7 @@ A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
 significant bytes are never removed.
 
-**See also:** [deb.myguard.nl](https://deb.myguard.nl) — Debian/Ubuntu packages
-including this module for nginx and Angie.
+**See also:** [nginx-strip-filter-module: CSS and JavaScript Minification](https://deb.myguard.nl/nginx-strip-filter-module-css-javascript-minification/) — full write-up, benchmarks and config examples on deb.myguard.nl.
 
 ## Features
 

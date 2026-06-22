@@ -286,6 +286,7 @@ ngx_http_strip_header_filter(ngx_http_request_t *r)
             && r->headers_out.status != NGX_HTTP_INTERNAL_SERVER_ERROR)
         || r->headers_out.status == NGX_HTTP_PARTIAL_CONTENT
         || r->headers_out.content_length_n == 0
+        || r->header_only        /* HEAD etc.: no body will ever arrive */
         || r != r->main)
     {
         return ngx_http_next_header_filter(r);
@@ -368,7 +369,32 @@ ngx_http_strip_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         if (nl == NULL) {
             return NGX_ERROR;
         }
-        nl->buf = b;
+
+        /* While we are still buffering we will return NGX_OK and hold this
+         * chain across filter calls. We must NOT retain the upstream ngx_buf_t
+         * pointer: its owner may recycle or refill it before we flush, which
+         * would corrupt our coalesced copy or, if the buffer grows, overrun the
+         * src allocation sized to ctx->len. Snapshot the in-memory bytes into a
+         * request-pool-owned buffer now. Buffers that triggered a bypass
+         * (file-backed / oversize: ctx->buffering already 0) are emitted in
+         * THIS same call, so aliasing the original pointer for them is safe. */
+        if (ctx->buffering && n > 0 && ngx_buf_in_memory(b)) {
+            ngx_buf_t  *cb = ngx_calloc_buf(r->pool);
+            u_char     *cp = ngx_pnalloc(r->pool, (size_t) n);
+            if (cb == NULL || cp == NULL) {
+                return NGX_ERROR;
+            }
+            ngx_memcpy(cp, b->pos, (size_t) n);
+            cb->pos = cp;
+            cb->last = cp + n;
+            cb->memory = 1;
+            cb->last_buf = b->last_buf;
+            cb->last_in_chain = b->last_in_chain;
+            cb->flush = b->flush;
+            nl->buf = cb;
+        } else {
+            nl->buf = b;
+        }
         nl->next = NULL;
         *ctx->last_in = nl;
         ctx->last_in = &nl->next;

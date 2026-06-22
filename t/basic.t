@@ -688,3 +688,72 @@ GET /
 --- response_body chomp: <rect fill="fill"/>
 --- no_error_log
 [error]
+
+
+
+=== TEST 57: JS keeps ASI newline before a string literal (return\n"x")
+--- config
+    strip_js on;
+    return 200 "function f(){\n  return\n  \"ok\"\n}";
+    default_type application/javascript;
+--- request
+GET /
+--- response_body chomp
+function f(){return
+"ok"}
+--- no_error_log
+[error]
+
+
+
+=== TEST 58: JS keeps ASI newline before a regex literal (return\n/re/)
+--- config
+    strip_js on;
+    return 200 "function f(x){\n  return\n  /a/.test(x)\n}";
+    default_type application/javascript;
+--- request
+GET /
+--- response_body chomp
+function f(x){return
+/a/.test(x)}
+--- no_error_log
+[error]
+
+
+
+=== TEST 59: HTML raw close requires a name boundary (</scriptx> not a close)
+--- config
+    strip on;
+    return 200 '<script>var s="</scriptx>x";</script><b>t</b>';
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <script>var s="</scriptx>x";</script><b>t</b>
+--- no_error_log
+[error]
+
+
+
+=== TEST 60: CSS keeps separating space before url() (red url(x))
+--- config
+    strip_css on;
+    return 200 ".a{background:red url(x.png)}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: .a{background:red url(x.png)}
+--- no_error_log
+[error]
+
+
+
+=== TEST 61: CSS drops space before url() after punctuation (:url())
+--- config
+    strip_css on;
+    return 200 ".a{background:  url(x.png)}";
+    default_type text/css;
+--- request
+GET /
+--- response_body chomp: .a{background:url(x.png)}
+--- no_error_log
+[error]

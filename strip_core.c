@@ -242,8 +242,22 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst)
         if ((c == 'u' || c == 'U') && i + 3 < len
             && sc_ci_eq(src + i, 3, "url") && src[i + 3] == '(')
         {
+            /* url(...) is an ordinary CSS token; a collapsed whitespace run in
+             * front of it must survive as a single space when it separates two
+             * value tokens (`background:red url(x)` must NOT become
+             * `background:redurl(x)`). Apply the same boundary rule as the
+             * generic token path: drop the space only next to punctuation that
+             * doesn't need a separator. */
             if (pending_space) {
-                pending_space = 0; /* url() is a token; preceding space dropped */
+                if (o > 0) {
+                    unsigned char prev = dst[o - 1];
+                    if (prev != '{' && prev != '}' && prev != ';' && prev != ':'
+                        && prev != ',' && prev != '(' && prev != '>')
+                    {
+                        dst[o++] = ' ';
+                    }
+                }
+                pending_space = 0;
             }
             dst[o++] = src[i];     /* u */
             dst[o++] = src[i + 1]; /* r */
@@ -390,6 +404,35 @@ js_word_allows_regex(const unsigned char *w, size_t n)
     return 0;
 }
 
+/*
+ * Flush a pending collapsed-whitespace run before a JS token `c` is emitted.
+ * Used before string/template/regex literals so they get the SAME ASI-safe
+ * treatment as the generic token path: if the run contained a newline and the
+ * surrounding tokens require it for Automatic Semicolon Insertion, a real '\n'
+ * is kept (e.g. `return\n"x"` must NOT become `return "x"`); otherwise a single
+ * separating space is emitted only between adjacent word/`)`/`]` and the token.
+ * Returns the new output index. Never expands beyond the consumed whitespace.
+ */
+static size_t
+js_flush_pending(unsigned char *dst, size_t o, int pending_nl, int pending_sp,
+                 unsigned char c)
+{
+    unsigned char prev;
+
+    if (!(pending_nl || pending_sp) || o == 0) {
+        return o;
+    }
+
+    prev = dst[o - 1];
+
+    if (pending_nl && js_keep_newline(prev, c)) {
+        dst[o++] = '\n';
+    } else if (sc_is_word(prev) || prev == ')' || prev == ']') {
+        dst[o++] = ' ';
+    }
+    return o;
+}
+
 /* Does the byte stream ending at dst[o-1] expect a regex (vs division) next? */
 static int
 js_regex_allowed(const unsigned char *dst, size_t o)
@@ -472,12 +515,7 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst)
         /* string / template literal — copy verbatim */
         if (c == '"' || c == '\'' || c == '`') {
             unsigned char q = c;
-            if ((pending_sp || pending_nl) && o > 0
-                && (sc_is_word(dst[o - 1]) || dst[o - 1] == ')'
-                    || dst[o - 1] == ']'))
-            {
-                dst[o++] = ' ';
-            }
+            o = js_flush_pending(dst, o, pending_nl, pending_sp, c);
             pending_sp = 0;
             pending_nl = 0;
             dst[o++] = c;
@@ -498,12 +536,7 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst)
         /* regex literal /.../ — only when a regex is grammatically allowed */
         if (c == '/' && js_regex_allowed(dst, o)) {
             int in_class = 0;
-            if ((pending_sp || pending_nl) && o > 0
-                && (sc_is_word(dst[o - 1]) || dst[o - 1] == ')'
-                    || dst[o - 1] == ']'))
-            {
-                dst[o++] = ' ';
-            }
+            o = js_flush_pending(dst, o, pending_nl, pending_sp, c);
             pending_sp = 0;
             pending_nl = 0;
             dst[o++] = c;
@@ -756,9 +789,17 @@ html_copy_raw(const unsigned char *src, size_t len, size_t i,
     size_t o = *op;
 
     while (i < len) {
+        /* A real end tag requires a name boundary after the element name:
+         * '>', whitespace, '/', or end of input. Without this, raw text that
+         * merely starts with the name (</scriptx>, </styled>) would falsely
+         * close the raw element and the rest would be minified as HTML. */
         if (src[i] == '<' && i + 1 < len && src[i + 1] == '/'
             && i + 2 + close_len <= len
-            && sc_ci_eq(src + i + 2, close_len, close))
+            && sc_ci_eq(src + i + 2, close_len, close)
+            && (i + 2 + close_len == len
+                || src[i + 2 + close_len] == '>'
+                || src[i + 2 + close_len] == '/'
+                || sc_is_space(src[i + 2 + close_len])))
         {
             /* emit the closing tag and stop */
             while (i < len) {

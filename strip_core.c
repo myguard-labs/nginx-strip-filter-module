@@ -236,6 +236,45 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst)
             continue;
         }
 
+        /* url(...) — copy the whole token verbatim. Unquoted url() content is
+         * NOT whitespace-collapsible or zero-trimmable, so guard it here. A
+         * quoted argument (url("...")) is handled by the inner quote copy. */
+        if ((c == 'u' || c == 'U') && i + 3 < len
+            && sc_ci_eq(src + i, 3, "url") && src[i + 3] == '(')
+        {
+            if (pending_space) {
+                pending_space = 0; /* url() is a token; preceding space dropped */
+            }
+            dst[o++] = src[i];     /* u */
+            dst[o++] = src[i + 1]; /* r */
+            dst[o++] = src[i + 2]; /* l */
+            dst[o++] = '(';
+            for (i += 4; i < len; i++) {
+                unsigned char d = src[i];
+                if (d == '"' || d == '\'') {
+                    unsigned char q = d;
+                    dst[o++] = d;
+                    for (i++; i < len; i++) {
+                        unsigned char e = src[i];
+                        dst[o++] = e;
+                        if (e == '\\' && i + 1 < len) {
+                            dst[o++] = src[++i];
+                            continue;
+                        }
+                        if (e == q) {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                dst[o++] = d;
+                if (d == ')') {
+                    break;
+                }
+            }
+            continue;
+        }
+
         if (sc_is_space(c)) {
             pending_space = 1;
             continue;
@@ -268,6 +307,26 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst)
             continue;
         }
 
+        /* drop a redundant ';' right before '}': {a:b;} → {a:b} */
+        if (c == '}' && o > 0 && dst[o - 1] == ';') {
+            dst[o - 1] = '}';
+            continue;
+        }
+
+        /* leading-zero strip: 0.5 → .5. Only when the '0' is immediately
+         * followed by '.' and the char before it is not part of a number or
+         * identifier (so 10.5 and a0.5 are untouched). */
+        if (c == '0' && i + 1 < len && src[i + 1] == '.') {
+            unsigned char prev = (o > 0) ? dst[o - 1] : 0;
+            if (!((prev >= '0' && prev <= '9')
+                  || (prev >= 'a' && prev <= 'z')
+                  || (prev >= 'A' && prev <= 'Z')
+                  || prev == '.' || prev == '_' || prev == '-'))
+            {
+                continue; /* skip emitting the '0'; '.' emitted next iter */
+            }
+        }
+
         dst[o++] = c;
 
         /* 0<unit> → 0: only when the '0' is a standalone numeric zero.
@@ -275,7 +334,7 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst)
          * trimming units from e.g. 10px, 20em). */
         if (c == '0') {
             unsigned char prev2 = (o >= 2) ? dst[o - 2] : 0;
-            if (prev2 < '0' || prev2 > '9') {
+            if ((prev2 < '0' || prev2 > '9') && prev2 != '.') {
                 size_t ni = css_skip_zero_unit(src, len, i + 1);
                 if (ni > i + 1) {
                     i = ni - 1; /* loop ++ will step past last unit char */

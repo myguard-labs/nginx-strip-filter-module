@@ -23,7 +23,7 @@ permissions:
 jobs:
   fuzz:
     name: strip_core fuzz
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, builder02, lxc]
     timeout-minutes: 30
     steps:
       - name: Checkout

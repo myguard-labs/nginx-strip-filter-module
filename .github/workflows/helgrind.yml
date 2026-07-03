@@ -1,4 +1,4 @@
-name: Valgrind
+name: Helgrind
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -6,21 +6,21 @@ env:
 
 on:
   schedule:
-    - cron: "30 3 1 * *"
+    - cron: "30 4 1 * *"
   workflow_dispatch: {}
 
 concurrency:
-  group: valgrind-${{ github.ref }}
+  group: helgrind-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  memcheck:
-    name: Memcheck
+  helgrind:
+    name: Helgrind
     runs-on: [self-hosted, builder02, lxc]
-    # Long monthly memcheck soak on self-hosted — no GitHub 6h cap.
+    # Long monthly helgrind soak on self-hosted — no GitHub 6h cap.
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -43,34 +43,32 @@ jobs:
       - name: Build debug server and module
         run: bash tools/ci-build.sh nginx "$NGINX_VERSION" debug
 
-      - name: Run Test::Nginx suite under Memcheck
+      - name: Run Test::Nginx suite under Helgrind
         env:
           TEST_NGINX_BINARY: >-
-            valgrind --tool=memcheck --track-origins=yes --leak-check=full
-            --show-leak-kinds=definite,indirect
-            --errors-for-leak-kinds=definite,indirect --error-exitcode=99
+            valgrind --tool=helgrind --error-exitcode=99
             --suppressions=${{ github.workspace }}/tools/valgrind.supp
-            --log-file=${{ github.workspace }}/valgrind-%p.log
+            --log-file=${{ github.workspace }}/helgrind-%p.log
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2
         run: prove -v t/
 
-      - name: Verify Memcheck reports
+      - name: Verify Helgrind reports
         if: always()
         run: |
-          cat valgrind-*.log || true
-          if grep -Eq 'ERROR SUMMARY: [1-9][0-9]* errors' valgrind-*.log 2>/dev/null; then
+          cat helgrind-*.log || true
+          if grep -Eq 'ERROR SUMMARY: [1-9][0-9]* errors' helgrind-*.log 2>/dev/null; then
             exit 1
           fi
 
-      - name: Upload Memcheck reports
+      - name: Upload Helgrind reports
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: valgrind-reports
-          path: valgrind-*.log
+          name: helgrind-reports
+          path: helgrind-*.log
           retention-days: 14
 
       - name: Notify Discord on failure

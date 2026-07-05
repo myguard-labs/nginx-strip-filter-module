@@ -1,0 +1,138 @@
+name: CI Fast
+
+# Fast dynamic analysis on every PR/push — kept short so PR feedback stays
+# quick. build-test.yml already does the full build + ASan/UBSan unit/.t
+# matrix; THIS file adds only the two cheap dynamic gates:
+#   fuzz-regression : 20s/target on all 6 strip kinds (html/css/js/json/svg/xml)
+#   memcheck-lite   : the Test::Nginx t/ suite run once under valgrind memcheck
+#                     (helgrind is deep-only)
+# Long discovery (hours fuzz, full memcheck+helgrind soak, scanners) lives in
+# ci-deep.yml (monthly cron + workflow_dispatch).
+#
+# Action pins (keep in sync with build-test.yml header):
+# actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+# actions/upload-artifact@v5 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
+# actions/cache@v4           -> 0057852bfaa89a56745cba8c7296529d2fc39830
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NGINX_VERSION: "1.31.1"
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-fast-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-regression:
+    name: Fuzz regression (20s/target)
+    runs-on: [self-hosted, builder02, lxc]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install clang + libFuzzer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build fuzz targets
+        run: bash fuzz/build.sh "$GITHUB_WORKSPACE/fuzz"
+
+      - name: Run each target 20s
+        run: |
+          set -euo pipefail
+          cd fuzz
+          for k in html css js json svg xml; do
+            echo "::group::fuzz_strip_${k}"
+            set +e
+            ./"fuzz_strip_${k}" \
+              -max_total_time=20 \
+              -dict="fuzz.dict.${k}" \
+              -print_final_stats=1 \
+              -artifact_prefix="crash-${k}-" \
+              "corpus_${k}/"
+            rc=$?
+            set -e
+            [ $rc -eq 0 ] || { echo "❌ fuzz_strip_${k} crash (exit $rc)"; exit 1; }
+            echo "::endgroup::"
+            echo "✓ fuzz_strip_${k}: no crashes in 20s"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: fuzz-fast-crashes
+          path: ${{ github.workspace }}/fuzz/crash-*
+          retention-days: 14
+
+  memcheck-lite:
+    name: Memcheck lite (t/ suite under valgrind)
+    runs-on: [self-hosted, builder02, lxc]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl libpcre2-dev valgrind zlib1g-dev \
+            cpanminus libio-socket-ssl-perl
+          sudo cpanm --notest --quiet Test::Nginx
+
+      - name: Cache source tarball
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
+          key: src-nginx-${{ env.NGINX_VERSION }}
+
+      - name: Build debug server and module
+        run: bash tools/ci-build.sh nginx "$NGINX_VERSION" debug
+
+      - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
+        env:
+          # TEST_NGINX_BINARY must be the bare nginx path: Test::Nginx runs
+          # can_run($TEST_NGINX_BINARY) and bails ("Cannot find the nginx
+          # executable in the PATH") if it is a multi-word command. The valgrind
+          # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
+          # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
+          TEST_NGINX_USE_VALGRIND: >-
+            --tool=memcheck --track-origins=yes --leak-check=full
+            --show-leak-kinds=definite,indirect
+            --errors-for-leak-kinds=definite,indirect --error-exitcode=99
+            --suppressions=${{ github.workspace }}/tools/valgrind.supp
+            --log-file=${{ github.workspace }}/valgrind-%p.log
+          TEST_NGINX_LOAD_MODULES: >-
+            ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
+          TEST_NGINX_SLEEP: 2
+        run: prove -v t/
+
+      - name: Verify Memcheck reports
+        if: always()
+        run: |
+          cat valgrind-*.log || true
+          if grep -Eq 'ERROR SUMMARY: [1-9][0-9]* errors' valgrind-*.log 2>/dev/null; then
+            exit 1
+          fi
+
+      - name: Upload Memcheck reports
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: memcheck-lite-reports
+          path: valgrind-*.log
+          retention-days: 14

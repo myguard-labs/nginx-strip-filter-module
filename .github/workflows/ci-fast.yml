@@ -104,17 +104,18 @@ jobs:
 
       - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
         env:
-          # Test::Nginx still probes PATH for an `nginx` even when
-          # TEST_NGINX_BINARY is set to the valgrind wrapper — put the built
-          # binary on PATH so its "Cannot find the nginx executable" check passes.
-          PATH: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          TEST_NGINX_BINARY: >-
-            valgrind --tool=memcheck --track-origins=yes --leak-check=full
+          # TEST_NGINX_BINARY must be the bare nginx path: Test::Nginx runs
+          # can_run($TEST_NGINX_BINARY) and bails ("Cannot find the nginx
+          # executable in the PATH") if it is a multi-word command. The valgrind
+          # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
+          # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
+          TEST_NGINX_USE_VALGRIND: >-
+            --tool=memcheck --track-origins=yes --leak-check=full
             --show-leak-kinds=definite,indirect
             --errors-for-leak-kinds=definite,indirect --error-exitcode=99
             --suppressions=${{ github.workspace }}/tools/valgrind.supp
             --log-file=${{ github.workspace }}/valgrind-%p.log
-            ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2

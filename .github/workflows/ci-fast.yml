@@ -104,6 +104,10 @@ jobs:
 
       - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
         env:
+          # Test::Nginx still probes PATH for an `nginx` even when
+          # TEST_NGINX_BINARY is set to the valgrind wrapper — put the built
+          # binary on PATH so its "Cannot find the nginx executable" check passes.
+          PATH: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           TEST_NGINX_BINARY: >-
             valgrind --tool=memcheck --track-origins=yes --leak-check=full
             --show-leak-kinds=definite,indirect

@@ -3,8 +3,9 @@
 .build/
 build/
 objs/
-fuzz/fuzz_strip
+fuzz/fuzz_strip_*
 fuzz/crash-*
-fuzz/*-min/
+fuzz/corpus_*-min/
 t/servroot/
-fuzz/corpus/*
+*.tar.gz
+nginx-*/

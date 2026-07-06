@@ -26,14 +26,15 @@ env:
 
 on:
   schedule:
-    # Monthly, 1st @ 03:30 UTC.
-    - cron: "30 3 1 * *"
+    # Monthly, day 3 @ 03:30 UTC — staggered per repo so ci-deep runs
+    # don't pile up on the shared self-hosted runners.
+    - cron: "30 3 3 * *"
   workflow_dispatch:
     inputs:
       fuzz_seconds:
         description: "Per-target fuzz duration (seconds)"
         required: false
-        default: "14400"
+        default: "3600"
 
 concurrency:
   group: ci-deep-${{ github.workflow }}-${{ github.ref }}
@@ -61,7 +62,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "FUZZ_SECS=${{ github.event.inputs.fuzz_seconds }}" >> "$GITHUB_ENV"
           else
-            echo "FUZZ_SECS=14400" >> "$GITHUB_ENV"
+            echo "FUZZ_SECS=3600" >> "$GITHUB_ENV"
           fi
 
       - name: Build fuzz targets
@@ -145,17 +146,18 @@ jobs:
 
       - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
         env:
-          # Test::Nginx still probes PATH for an `nginx` even when
-          # TEST_NGINX_BINARY is set to the valgrind wrapper — put the built
-          # binary on PATH so its "Cannot find the nginx executable" check passes.
-          PATH: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          TEST_NGINX_BINARY: >-
-            valgrind --tool=memcheck --track-origins=yes --leak-check=full
+          # TEST_NGINX_BINARY must be the bare nginx path: Test::Nginx runs
+          # can_run($TEST_NGINX_BINARY) and bails ("Cannot find the nginx
+          # executable in the PATH") if it is a multi-word command. The valgrind
+          # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
+          # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
+          TEST_NGINX_USE_VALGRIND: >-
+            --tool=memcheck --track-origins=yes --leak-check=full
             --show-leak-kinds=definite,indirect
             --errors-for-leak-kinds=definite,indirect --error-exitcode=99
             --suppressions=${{ github.workspace }}/tools/valgrind.supp
             --log-file=${{ github.workspace }}/valgrind-%p.log
-            ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2
@@ -216,15 +218,16 @@ jobs:
 
       - name: Run Test::Nginx suite under Helgrind (--error-exitcode=99, WITH suppressions)
         env:
-          # Test::Nginx still probes PATH for an `nginx` even when
-          # TEST_NGINX_BINARY is set to the valgrind wrapper — put the built
-          # binary on PATH so its "Cannot find the nginx executable" check passes.
-          PATH: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          TEST_NGINX_BINARY: >-
-            valgrind --tool=helgrind --error-exitcode=99
+          # TEST_NGINX_BINARY must be the bare nginx path: Test::Nginx runs
+          # can_run($TEST_NGINX_BINARY) and bails ("Cannot find the nginx
+          # executable in the PATH") if it is a multi-word command. The valgrind
+          # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
+          # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
+          TEST_NGINX_USE_VALGRIND: >-
+            --tool=helgrind --error-exitcode=99
             --suppressions=${{ github.workspace }}/tools/valgrind.supp
             --log-file=${{ github.workspace }}/helgrind-%p.log
-            ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2

@@ -1,12 +1,7 @@
-name: CI Fast
+name: Valgrind
 
-# Fast dynamic analysis on every PR/push — kept short so PR feedback stays
-# quick. build-test.yml already does the full build + ASan/UBSan unit/.t
-# matrix; THIS file adds only the two cheap dynamic gates:
-#   fuzz-regression : 20s/target on all 6 strip kinds (html/css/js/json/svg/xml)
-#   memcheck-lite   : the Test::Nginx t/ suite run once under valgrind memcheck
-#                     (helgrind is deep-only)
-# Long discovery (hours fuzz, full memcheck+helgrind soak, scanners) lives in
+# Valgrind memcheck lite soak on every PR/push — the Test::Nginx t/ suite run
+# once under valgrind memcheck. The full memcheck + helgrind soak lives in
 # ci-deep.yml (monthly cron + workflow_dispatch).
 #
 # Action pins (keep in sync with build-test.yml header):
@@ -26,57 +21,13 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: ci-fast-${{ github.workflow }}-${{ github.ref }}
+  group: valgrind-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  fuzz-regression:
-    name: Fuzz regression (20s/target)
-    runs-on: [self-hosted, builder02, lxc]
-    timeout-minutes: 30
-    steps:
-      - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-
-      - name: Install clang + libFuzzer
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
-
-      - name: Build fuzz targets
-        run: bash fuzz/build.sh "$GITHUB_WORKSPACE/fuzz"
-
-      - name: Run each target 20s
-        run: |
-          set -euo pipefail
-          cd fuzz
-          for k in html css js json svg xml; do
-            echo "::group::fuzz_strip_${k}"
-            set +e
-            ./"fuzz_strip_${k}" \
-              -max_total_time=20 \
-              -dict="fuzz.dict.${k}" \
-              -print_final_stats=1 \
-              -artifact_prefix="crash-${k}-" \
-              "corpus_${k}/"
-            rc=$?
-            set -e
-            [ $rc -eq 0 ] || { echo "❌ fuzz_strip_${k} crash (exit $rc)"; exit 1; }
-            echo "::endgroup::"
-            echo "✓ fuzz_strip_${k}: no crashes in 20s"
-          done
-
-      - name: Upload crash artifacts
-        if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: fuzz-fast-crashes
-          path: ${{ github.workspace }}/fuzz/crash-*
-          retention-days: 14
-
   memcheck-lite:
     name: Memcheck lite (t/ suite under valgrind)
     runs-on: [self-hosted, builder02, lxc]

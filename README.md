@@ -1,5 +1,9 @@
 # ngx_http_strip_filter_module
 
+[![Build & Test](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml)
+[![CI Fast](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-fast.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-fast.yml)
+[![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
+
 A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
 significant bytes are never removed.

@@ -5,6 +5,7 @@
 [![Fuzzing](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/fuzzing.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/fuzzing.yml)
 [![Valgrind](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml)
 [![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
+[![CodeQL](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml)
 
 A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so

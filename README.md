@@ -126,4 +126,4 @@ load_module modules/ngx_http_strip_filter_module.so;
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+BSD-2-Clause (same terms as nginx and Angie) — see [LICENSE](LICENSE).

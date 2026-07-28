@@ -133,6 +133,57 @@ jobs:
           path: artifact/
           retention-days: 1
 
+  unit-core:
+    name: Core unit tests
+    runs-on: [self-hosted, builder02, lxc]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang gcovr
+
+      # strip_core.c has no nginx dependency, so its unit suite needs no server
+      # build and runs in seconds. Both compilers, because the core is also
+      # compiled by whichever CC the consuming build uses.
+      - name: Run unit suite (gcc and clang)
+        run: |
+          for cc in gcc clang; do
+            echo "== $cc"
+            "$cc" -O1 -g -std=c11 -Wall -Wextra -Werror -I. \
+              -o "/tmp/strip_core_test.$cc" t/strip_core_test.c strip_core.c
+            "/tmp/strip_core_test.$cc"
+          done
+
+      # Sanitizers on the core only: the whole point of the ngx-independent
+      # split is that it can be driven without a worker.
+      - name: Run unit suite under ASan and UBSan
+        run: |
+          clang -O1 -g -std=c11 -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -I. \
+            -o /tmp/strip_core_test.san t/strip_core_test.c strip_core.c
+          ASAN_OPTIONS=detect_leaks=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            /tmp/strip_core_test.san
+
+      # Reported, never gated. Chasing the percentage produces tests that
+      # execute lines without asserting anything; the gate that matters is the
+      # per-case control mutation, applied in review. See the harness docs:
+      # https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE.md
+      - name: Report core coverage (informational)
+        run: |
+          work=$(mktemp -d)
+          gcc -O0 -g --coverage -std=c11 -I. \
+            -o "$work/t" t/strip_core_test.c strip_core.c
+          "$work/t" >/dev/null
+          gcov -o "$work" "$work/t-strip_core.gcda" | grep -A1 strip_core.c
+          echo "--- lines with no coverage (each needs a test or a COVERAGE: note) ---"
+          awk -F: '/#####/ { printf "strip_core.c:%s:%s\n", $2, substr($0, index($0, $3)) }' \
+            strip_core.c.gcov || true
+
   test-nginx:
     name: Test::Nginx
     runs-on: [self-hosted, builder02, lxc]

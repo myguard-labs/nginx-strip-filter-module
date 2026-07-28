@@ -9,3 +9,6 @@ fuzz/corpus_*-min/
 t/servroot/
 *.tar.gz
 nginx-*/
+*.gcov
+*.gcda
+*.gcno

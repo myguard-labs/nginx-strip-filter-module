@@ -1,4 +1,4 @@
-# sync-sha: 5bbbfdc98f9e1af1a788f525f6e0b94a8fa967cfd6b60da2a7b66826e30e68df
+# sync-sha: 56c7c053a89e3ce161bffd7a1a121ff643f484f57f84b94d66fca86dd0163ec4
 name: Valgrind
 
 # Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
@@ -31,7 +31,7 @@ permissions:
 jobs:
   memcheck-lite:
     name: Memcheck lite (ci/t/ suite under valgrind)
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 45
     steps:
       - name: Checkout module

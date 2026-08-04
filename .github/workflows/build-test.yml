@@ -1,4 +1,4 @@
-# sync-sha: 63bfebab8ee11e2c34c2e3f0ff1f32db5e2d71f3cbe21fcaf72f0e8c3bf935d6
+# sync-sha: e26987eaa52175437aa2bfb9f729fa45b28b75e08ddf363f4481678088094445
 name: Build and Test
 
 env:
@@ -22,7 +22,7 @@ permissions:
 jobs:
   validation:
     name: Validation
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -68,7 +68,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.flavor }} ${{ matrix.version }} / ${{ matrix.cc }})
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -142,7 +142,7 @@ jobs:
 
   unit-core:
     name: Core unit tests
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -193,7 +193,7 @@ jobs:
 
   test-nginx:
     name: Test::Nginx
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 20
     needs: build
     steps:
@@ -223,7 +223,7 @@ jobs:
 
   asan:
     name: ASan and UBSan
-    runs-on: [self-hosted, builder02, lxc]
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 30
     steps:
       - name: Checkout

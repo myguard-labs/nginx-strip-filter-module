@@ -1,4 +1,4 @@
-# sync-sha: 4e6a3409577ea2c6aad7b02883aedffda7399f9d66efbabcccad22c660dc330f
+# sync-sha: 3109e33572537f9efff4d43bd8ce5f9df74a92997f8d7fb9469fe01fe33b65eb
 name: CodeQL
 
 env:
@@ -13,6 +13,7 @@ on:
   schedule:
     - cron: "47 4 3 * *"
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: codeql-${{ github.ref }}

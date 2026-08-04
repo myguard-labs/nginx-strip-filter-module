@@ -1,4 +1,4 @@
-# sync-sha: e26987eaa52175437aa2bfb9f729fa45b28b75e08ddf363f4481678088094445
+# sync-sha: bf3e442b443461977544cf1675d21f870ac0df692305793378a69a9f0b4e9f0c
 name: Build and Test
 
 env:
@@ -11,6 +11,7 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

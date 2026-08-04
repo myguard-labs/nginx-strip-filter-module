@@ -1,3 +1,4 @@
+# sync-sha: a3a222b11c1fe400614ea01765b5cf5669df18f35d0b7051b6b1233b1a003edf
 name: Build and Test
 
 env:
@@ -35,7 +36,13 @@ jobs:
       - name: Validate scripts and source
         run: |
           bash -n tools/ci-build.sh
-          shellcheck tools/ci-build.sh
+          shellcheck tools/ci-build.sh tools/sync-stamp.sh
+          # Each stamped .github/ file carries a `# sync-sha:` of its own
+          # content, so a `--list` diff against nginx-skeleton-module names
+          # exactly which copies have drifted. The stamps are only worth
+          # reading if they cannot go stale, hence this gate: edit a workflow
+          # without running tools/sync-stamp.sh and the PR goes red here.
+          bash tools/sync-stamp.sh --check
           cppcheck \
             --enable=warning,performance,portability \
             --error-exitcode=1 \

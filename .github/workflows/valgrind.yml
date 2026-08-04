@@ -1,3 +1,4 @@
+# sync-sha: c37a615ad21cf74df0db3391e5aa76f3574b771f94696ba6ca1dbe16c95b3080
 name: Valgrind
 
 # Valgrind memcheck lite soak on every PR/push — the Test::Nginx t/ suite run

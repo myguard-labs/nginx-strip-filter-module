@@ -1,4 +1,4 @@
-# sync-sha: 430ef7c5d4cd56cd240bea12702cd12c02066c1ac69c9f4f294f50fb0173ffd9
+# sync-sha: e338f2e43c86c849a5262b5cca1010e0168936fe1b8b289173feca768ca6f164
 name: Fuzzing
 
 # Fast fuzz regression gate on every PR/push — 20s/target on all 6 strip
@@ -19,6 +19,7 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: fuzzing-${{ github.workflow }}-${{ github.ref }}

@@ -1,4 +1,4 @@
-# sync-sha: 56c7c053a89e3ce161bffd7a1a121ff643f484f57f84b94d66fca86dd0163ec4
+# sync-sha: 385a1dd53dc88c9c1fa4ba218daa7650298318d9bd52d0285b2868579f666ede
 name: Valgrind
 
 # Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
@@ -20,6 +20,7 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: valgrind-${{ github.workflow }}-${{ github.ref }}

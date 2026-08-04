@@ -1,4 +1,4 @@
-# sync-sha: b813f82c4d43248018fcecd5f61f68e02d5a6376d12fc66e93ded5acaea42658
+# sync-sha: 90311b2c5fcb38ae231232f78c4a8f65711c5927c474c25d2f3191f67286f451
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -20,6 +20,7 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch: {}
+  workflow_call: {}
 
 concurrency:
   group: security-scanners-${{ github.workflow }}-${{ github.ref }}

@@ -1,4 +1,4 @@
-# sync-sha: a84e8ca1f3ceabfa4504ffa761562c7f69391434dd7297dc2c1ef890261c6660
+# sync-sha: dd4dd9aedb9d22bb05fcc01d91e84f2e5eb91ad94ed697fa7a78edd5f96245e5
 name: CI Deep
 
 # Exhaustive dynamic analysis — monthly cron + on-demand only, NEVER on PR.
@@ -11,9 +11,9 @@ name: CI Deep
 #
 # Jobs: fuzz (all 6 kinds, 14400s/target) · memcheck soak · helgrind soak ·
 # scanners.
-#   * memcheck AND helgrind run the Test::Nginx t/ suite under valgrind (the
-#     module ships a real filter, so t/ exercises a live nginx worker). BOTH
-#     pass --suppressions=tools/valgrind.supp; both pass --error-exitcode=99
+#   * memcheck AND helgrind run the Test::Nginx ci/t/ suite under valgrind (the
+#     module ships a real filter, so ci/t/ exercises a live nginx worker). BOTH
+#     pass --suppressions=ci/tools/valgrind.supp; both pass --error-exitcode=99
 #     (helgrind additionally — a detected race MUST fail the job).
 #
 # Action pins (keep in sync with build-test.yml header):
@@ -67,7 +67,7 @@ jobs:
           fi
 
       - name: Build fuzz targets
-        run: bash fuzz/build.sh "$GITHUB_WORKSPACE/fuzz"
+        run: bash ci/fuzz/build.sh "$GITHUB_WORKSPACE/ci/fuzz"
 
       - name: Fuzz each target
         run: |
@@ -143,7 +143,7 @@ jobs:
           key: src-nginx-${{ env.NGINX_VERSION }}
 
       - name: Build debug server and module
-        run: bash tools/ci-build.sh nginx "$NGINX_VERSION" debug
+        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
 
       - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
         env:
@@ -152,17 +152,18 @@ jobs:
           # executable in the PATH") if it is a multi-word command. The valgrind
           # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
           # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_USE_VALGRIND: >-
             --tool=memcheck --track-origins=yes --leak-check=full
             --show-leak-kinds=definite,indirect
             --errors-for-leak-kinds=definite,indirect --error-exitcode=99
-            --suppressions=${{ github.workspace }}/tools/valgrind.supp
+            --suppressions=${{ github.workspace }}/ci/tools/valgrind.supp
             --log-file=${{ github.workspace }}/valgrind-%p.log
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2
-        run: prove -v t/
+        run: prove -v ci/t/
 
       - name: Verify Memcheck reports
         if: always()
@@ -215,7 +216,7 @@ jobs:
           key: src-nginx-${{ env.NGINX_VERSION }}
 
       - name: Build debug server and module
-        run: bash tools/ci-build.sh nginx "$NGINX_VERSION" debug
+        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
 
       - name: Run Test::Nginx suite under Helgrind (--error-exitcode=99, WITH suppressions)
         env:
@@ -224,15 +225,16 @@ jobs:
           # executable in the PATH") if it is a multi-word command. The valgrind
           # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
           # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_USE_VALGRIND: >-
             --tool=helgrind --error-exitcode=99
-            --suppressions=${{ github.workspace }}/tools/valgrind.supp
+            --suppressions=${{ github.workspace }}/ci/tools/valgrind.supp
             --log-file=${{ github.workspace }}/helgrind-%p.log
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2
-        run: prove -v t/
+        run: prove -v ci/t/
 
       - name: Verify Helgrind reports
         if: always()
@@ -293,11 +295,11 @@ jobs:
       - name: flawfinder
         run: |
           flawfinder --minlevel=1 \
-            "$GITHUB_WORKSPACE/ngx_http_strip_filter_module.c" \
-            "$GITHUB_WORKSPACE/strip_core.c" 2>&1 | tee flawfinder.log
+            "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" \
+            "$GITHUB_WORKSPACE/src/strip_core.c" 2>&1 | tee flawfinder.log
           if flawfinder --minlevel=4 --quiet \
-               "$GITHUB_WORKSPACE/ngx_http_strip_filter_module.c" \
-               "$GITHUB_WORKSPACE/strip_core.c" 2>/dev/null | grep -Eq 'Hits = [1-9]'; then
+               "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" \
+               "$GITHUB_WORKSPACE/src/strip_core.c" 2>/dev/null | grep -Eq 'Hits = [1-9]'; then
             echo "✗ flawfinder: high-severity (>=4) findings" >&2
             exit 1
           fi
@@ -310,8 +312,8 @@ jobs:
             -I$GITHUB_WORKSPACE -I/usr/include"
           status=0
           for f in \
-            "$GITHUB_WORKSPACE/strip_core.c" \
-            "$GITHUB_WORKSPACE/ngx_http_strip_filter_module.c"; do
+            "$GITHUB_WORKSPACE/src/strip_core.c" \
+            "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c"; do
             # shellcheck disable=SC2086
             clang-tidy "$f" \
               --checks='-*,cert-*,clang-analyzer-security.*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling' \
@@ -321,8 +323,8 @@ jobs:
       - name: semgrep
         run: |
           semgrep scan --config p/c --config p/security-audit \
-            "$GITHUB_WORKSPACE/strip_core.c" \
-            "$GITHUB_WORKSPACE/ngx_http_strip_filter_module.c" 2>&1 | tee semgrep.log || true
+            "$GITHUB_WORKSPACE/src/strip_core.c" \
+            "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" 2>&1 | tee semgrep.log || true
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

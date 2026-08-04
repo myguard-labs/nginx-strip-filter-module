@@ -1,7 +1,7 @@
-# sync-sha: c37a615ad21cf74df0db3391e5aa76f3574b771f94696ba6ca1dbe16c95b3080
+# sync-sha: 5bbbfdc98f9e1af1a788f525f6e0b94a8fa967cfd6b60da2a7b66826e30e68df
 name: Valgrind
 
-# Valgrind memcheck lite soak on every PR/push — the Test::Nginx t/ suite run
+# Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
 # once under valgrind memcheck. The full memcheck + helgrind soak lives in
 # ci-deep.yml (monthly cron + workflow_dispatch).
 #
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   memcheck-lite:
-    name: Memcheck lite (t/ suite under valgrind)
+    name: Memcheck lite (ci/t/ suite under valgrind)
     runs-on: [self-hosted, builder02, lxc]
     timeout-minutes: 45
     steps:
@@ -52,7 +52,7 @@ jobs:
           key: src-nginx-${{ env.NGINX_VERSION }}
 
       - name: Build debug server and module
-        run: bash tools/ci-build.sh nginx "$NGINX_VERSION" debug
+        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
 
       - name: Run Test::Nginx suite under Memcheck (WITH suppressions)
         env:
@@ -61,17 +61,18 @@ jobs:
           # executable in the PATH") if it is a multi-word command. The valgrind
           # wrapper goes through the native TEST_NGINX_USE_VALGRIND hook instead
           # (string form: Test::Nginx prepends `valgrind -q <opts>`).
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
           TEST_NGINX_USE_VALGRIND: >-
             --tool=memcheck --track-origins=yes --leak-check=full
             --show-leak-kinds=definite,indirect
             --errors-for-leak-kinds=definite,indirect --error-exitcode=99
-            --suppressions=${{ github.workspace }}/tools/valgrind.supp
+            --suppressions=${{ github.workspace }}/ci/tools/valgrind.supp
             --log-file=${{ github.workspace }}/valgrind-%p.log
           TEST_NGINX_LOAD_MODULES: >-
             ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/ngx_http_strip_filter_module.so
           TEST_NGINX_SLEEP: 2
-        run: prove -v t/
+        run: prove -v ci/t/
 
       - name: Verify Memcheck reports
         if: always()

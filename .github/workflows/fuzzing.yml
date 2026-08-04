@@ -1,4 +1,4 @@
-# sync-sha: 37511705de61bfee9cd9e734d0f2f2ee4cc25b8b9460283fb7d07eb7dedc8f13
+# sync-sha: f717f7922688ffe6e4898fe8813b75025017a2f0bfc271087d07dfc72241bcc5
 name: Fuzzing
 
 # Fast fuzz regression gate on every PR/push — 20s/target on all 6 strip
@@ -42,7 +42,7 @@ jobs:
           sudo apt-get install -y clang
 
       - name: Build fuzz targets
-        run: bash fuzz/build.sh "$GITHUB_WORKSPACE/fuzz"
+        run: bash ci/fuzz/build.sh "$GITHUB_WORKSPACE/ci/fuzz"
 
       - name: Run each target 20s
         run: |

@@ -3,10 +3,11 @@
 .build/
 build/
 objs/
-fuzz/fuzz_strip_*
-fuzz/crash-*
-fuzz/corpus_*-min/
-t/servroot/
+ci/fuzz/fuzz_strip_*
+ci/fuzz/crash-*
+ci/fuzz/corpus_*-min/
+ci/t/servroot/
+ci/tests/unit/test_scan
 *.tar.gz
 nginx-*/
 *.gcov

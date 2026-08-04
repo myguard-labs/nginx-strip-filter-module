@@ -23,15 +23,15 @@
 # makes it stable across re-stamping and lets `--check` recompute it in place.
 #
 # Usage:
-#   tools/sync-stamp.sh            # rewrite every stamp (use after editing)
-#   tools/sync-stamp.sh --check    # verify; exit 1 on any stale/missing stamp
-#   tools/sync-stamp.sh --list     # print path<TAB>sha, for a consuming repo
+#   ci/tools/sync-stamp.sh         # rewrite every stamp (use after editing)
+#   ci/tools/sync-stamp.sh --check # verify; exit 1 on any stale/missing stamp
+#   ci/tools/sync-stamp.sh --list  # print path<TAB>sha, for a consuming repo
 #
 # --check is what CI runs: it fails when a tracked file was edited without
 # re-stamping, so the stamps cannot rot into decoration.
 #
 # SCOPE: the files actually shared with the skeleton -- workflows, the scripts
-# they call, and composite actions. tools/ is NOT stamped; it is a much wider
+# they call, and composite actions. ci/tools/ is NOT stamped; it is a much wider
 # surface carrying this module's own name, paths and thresholds throughout, so
 # it drifts from the skeleton by design and a stamp on it would report drift
 # that is the intended state.
@@ -251,6 +251,6 @@ fi
 
 if [ "$MODE" = check ]; then
     [ "$rc" -eq 0 ] && echo "sync-stamp: all $count file(s) current"
-    [ "$rc" -ne 0 ] && echo "sync-stamp: re-run tools/sync-stamp.sh to fix" >&2
+    [ "$rc" -ne 0 ] && echo "sync-stamp: re-run ci/tools/sync-stamp.sh to fix" >&2
 fi
 exit "$rc"

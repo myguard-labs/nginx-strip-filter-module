@@ -3,12 +3,12 @@
  *
  * Depends on nothing but strip_core.{c,h}. Builds and runs anywhere:
  *
- *     cc -I.. -o t t/strip_core_test.c strip_core.c && ./t
+ *     ci/tests/unit/run.sh
  *
  * No nginx headers, no test framework, no harness. Output is TAP 13.
  *
  * WHY THIS FILE EXISTS
- *   t/basic.t exercises the core through a booted nginx, which is the right
+ *   ci/t/basic.t exercises the core through a booted nginx, which is the right
  *   place for the filter's request-path behaviour but a poor instrument for the
  *   core's state machines: one Test::Nginx case costs a server boot, and whole
  *   features of the minifier (CSS url() tokens, hex-colour shortening, JS

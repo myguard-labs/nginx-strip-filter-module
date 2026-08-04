@@ -1,4 +1,4 @@
-# sync-sha: f717f7922688ffe6e4898fe8813b75025017a2f0bfc271087d07dfc72241bcc5
+# sync-sha: e60552863c377416eb9e14a16c3ed7b7cc6f4b0c1e5e9b4226b2aaba2a100bdd
 name: Fuzzing
 
 # Fast fuzz regression gate on every PR/push — 20s/target on all 6 strip
@@ -47,7 +47,7 @@ jobs:
       - name: Run each target 20s
         run: |
           set -euo pipefail
-          cd fuzz
+          cd ci/fuzz
           for k in html css js json svg xml; do
             echo "::group::fuzz_strip_${k}"
             set +e
@@ -69,5 +69,5 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: fuzz-fast-crashes
-          path: ${{ github.workspace }}/fuzz/crash-*
+          path: ${{ github.workspace }}/ci/fuzz/crash-*
           retention-days: 14

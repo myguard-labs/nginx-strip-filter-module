@@ -1,4 +1,4 @@
-# sync-sha: dd4dd9aedb9d22bb05fcc01d91e84f2e5eb91ad94ed697fa7a78edd5f96245e5
+# sync-sha: d9823e702d1525d7192df87c3b6f38d0e323ddd8a8d64ad5234cee1bd70f554f
 name: CI Deep
 
 # Exhaustive dynamic analysis — monthly cron + on-demand only, NEVER on PR.
@@ -72,7 +72,7 @@ jobs:
       - name: Fuzz each target
         run: |
           set -euo pipefail
-          cd fuzz
+          cd ci/fuzz
           for k in html css js json svg xml; do
             echo "::group::fuzz_strip_${k}"
             set +e
@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: fuzz-deep-crashes
-          path: ${{ github.workspace }}/fuzz/crash-*
+          path: ${{ github.workspace }}/ci/fuzz/crash-*
           retention-days: 30
 
       - name: Upload minimized corpus
@@ -105,7 +105,7 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: fuzz-corpus
-          path: ${{ github.workspace }}/fuzz/corpus_*-min
+          path: ${{ github.workspace }}/ci/fuzz/corpus_*-min
           retention-days: 30
 
       - name: Notify Discord on failure

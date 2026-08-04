@@ -1,4 +1,4 @@
-# sync-sha: a3a222b11c1fe400614ea01765b5cf5669df18f35d0b7051b6b1233b1a003edf
+# sync-sha: 63bfebab8ee11e2c34c2e3f0ff1f32db5e2d71f3cbe21fcaf72f0e8c3bf935d6
 name: Build and Test
 
 env:
@@ -35,22 +35,22 @@ jobs:
 
       - name: Validate scripts and source
         run: |
-          bash -n tools/ci-build.sh
-          shellcheck tools/ci-build.sh tools/sync-stamp.sh
+          bash -n ci/tools/ci-build.sh
+          shellcheck ci/tools/ci-build.sh ci/tools/sync-stamp.sh
           # Each stamped .github/ file carries a `# sync-sha:` of its own
           # content, so a `--list` diff against nginx-skeleton-module names
           # exactly which copies have drifted. The stamps are only worth
           # reading if they cannot go stale, hence this gate: edit a workflow
-          # without running tools/sync-stamp.sh and the PR goes red here.
-          bash tools/sync-stamp.sh --check
+          # without running ci/tools/sync-stamp.sh and the PR goes red here.
+          bash ci/tools/sync-stamp.sh --check
           cppcheck \
             --enable=warning,performance,portability \
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
             --suppress=normalCheckLevelMaxBranches \
             --suppress=unusedFunction \
-            strip_core.c \
-            ngx_http_strip_filter_module.c
+            src/strip_core.c \
+            src/ngx_http_strip_filter_module.c
           git diff --check
 
       - name: Lint workflows
@@ -98,7 +98,7 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
         run: |
-          bash tools/ci-build.sh "${{ matrix.flavor }}" "${{ matrix.version }}"
+          bash ci/tools/ci-build.sh "${{ matrix.flavor }}" "${{ matrix.version }}"
           build=".build/${{ matrix.flavor }}-${{ matrix.version }}/objs"
           test -f "$build/ngx_http_strip_filter_module.so"
 
@@ -114,14 +114,14 @@ jobs:
               -Wall -Wextra -Wshadow -Wstrict-prototypes \
               -Wstrict-aliasing -Wunreachable-code -Werror \
               -Wno-unused-parameter \
-              -I "$GITHUB_WORKSPACE" \
-              $incs "$GITHUB_WORKSPACE/ngx_http_strip_filter_module.c" \
+              -I "$GITHUB_WORKSPACE/src" \
+              $incs "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" \
               -o /tmp/module_wrapper.o
             "${{ matrix.cc }}" -c $cflags \
               -Wall -Wextra -Wshadow -Wstrict-prototypes \
               -Wstrict-aliasing -Wunreachable-code -Werror \
               -Wno-unused-parameter \
-              "$GITHUB_WORKSPACE/strip_core.c" \
+              "$GITHUB_WORKSPACE/src/strip_core.c" \
               -o /tmp/module_core.o
           )
 
@@ -160,8 +160,8 @@ jobs:
         run: |
           for cc in gcc clang; do
             echo "== $cc"
-            "$cc" -O1 -g -std=c11 -Wall -Wextra -Werror -I. \
-              -o "/tmp/strip_core_test.$cc" t/strip_core_test.c strip_core.c
+            "$cc" -O1 -g -std=c11 -Wall -Wextra -Werror -Isrc \
+              -o "/tmp/strip_core_test.$cc" ci/tests/unit/test_scan.c src/strip_core.c
             "/tmp/strip_core_test.$cc"
           done
 
@@ -170,8 +170,8 @@ jobs:
       - name: Run unit suite under ASan and UBSan
         run: |
           clang -O1 -g -std=c11 -fsanitize=address,undefined \
-            -fno-omit-frame-pointer -I. \
-            -o /tmp/strip_core_test.san t/strip_core_test.c strip_core.c
+            -fno-omit-frame-pointer -Isrc \
+            -o /tmp/strip_core_test.san ci/tests/unit/test_scan.c src/strip_core.c
           ASAN_OPTIONS=detect_leaks=1 \
             UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
             /tmp/strip_core_test.san
@@ -183,12 +183,12 @@ jobs:
       - name: Report core coverage (informational)
         run: |
           work=$(mktemp -d)
-          gcc -O0 -g --coverage -std=c11 -I. \
-            -o "$work/t" t/strip_core_test.c strip_core.c
+          gcc -O0 -g --coverage -std=c11 -Isrc \
+            -o "$work/t" ci/tests/unit/test_scan.c src/strip_core.c
           "$work/t" >/dev/null
           gcov -o "$work" "$work/t-strip_core.gcda" | grep -A1 strip_core.c
           echo "--- lines with no coverage (each needs a test or a COVERAGE: note) ---"
-          awk -F: '/#####/ { printf "strip_core.c:%s:%s\n", $2, substr($0, index($0, $3)) }' \
+          awk -F: '/#####/ { printf "src/strip_core.c:%s:%s\n", $2, substr($0, index($0, $3)) }' \
             strip_core.c.gcov || true
 
   test-nginx:
@@ -214,11 +214,12 @@ jobs:
 
       - name: Run Test::Nginx suite
         env:
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/nginx-bin/nginx
           TEST_NGINX_LOAD_MODULES: ${{ github.workspace }}/nginx-bin/ngx_http_strip_filter_module.so
         run: |
           chmod +x nginx-bin/nginx
-          prove -v t/
+          prove -v ci/t/
 
   asan:
     name: ASan and UBSan
@@ -237,11 +238,12 @@ jobs:
           sudo cpanm --notest --quiet Test::Nginx
 
       - name: Build with sanitizers
-        run: bash tools/ci-build.sh nginx "$NGINX_VERSION" asan
+        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" asan
 
       - name: Run Test::Nginx suite under ASan and UBSan
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
-        run: prove -v t/
+        run: prove -v ci/t/

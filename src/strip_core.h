@@ -2,7 +2,7 @@
  * strip_core.h - ngx-independent content minifier core.
  *
  * Pure C, no nginx headers, so the same code is exercised by the libFuzzer
- * harness (fuzz/) and the runtime module (ngx_http_strip_filter_module.c).
+ * harness (ci/fuzz/) and the runtime module (ngx_http_strip_filter_module.c).
  *
  * Each strip_* function consumes a NUL-free byte range [src, src+len) and
  * appends the minified result to a caller-grown buffer via the sink callback.

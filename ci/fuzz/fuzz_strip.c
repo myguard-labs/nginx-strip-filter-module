@@ -14,7 +14,7 @@
  *   5 = STRIP_XML
  */
 
-#include "../strip_core.h"
+#include "../../src/strip_core.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>

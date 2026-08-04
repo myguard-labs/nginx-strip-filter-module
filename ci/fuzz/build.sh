@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Build the six strip_core libFuzzer targets.
-# Usage: bash fuzz/build.sh [fuzz-dir]
+# Usage: bash ci/fuzz/build.sh [fuzz-dir]
 set -euo pipefail
 
-FUZZ_DIR="${1:-$PWD/fuzz}"
-ROOT="$(dirname "$FUZZ_DIR")"
+FUZZ_DIR="${1:-$PWD/ci/fuzz}"
+# ci/fuzz -> ci -> repo root; the C now lives under src/.
+ROOT="$(cd "$FUZZ_DIR/../.." && pwd)"
+SRC="$ROOT/src"
 
 CC="${CC:-clang}"
 CFLAGS="-O1 -g -fsanitize=fuzzer,address,undefined \
   -fno-sanitize-recover=undefined \
   -fno-omit-frame-pointer \
-  -I$ROOT"
+  -I$SRC"
 
 declare -A KINDS=(
     [html]=0
@@ -29,7 +31,7 @@ for name in html css js json svg xml; do
     "$CC" $CFLAGS \
         -DFUZZ_KIND="${kind}" \
         "$FUZZ_DIR/fuzz_strip.c" \
-        "$ROOT/strip_core.c" \
+        "$SRC/strip_core.c" \
         -o "$FUZZ_DIR/fuzz_strip_${name}"
 done
 echo "done"

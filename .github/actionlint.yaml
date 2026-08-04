@@ -1,5 +1,15 @@
+# Declare the self-hosted runner labels used in this repo.
+#
+# Without this, actionlint flags every self-hosted selector as an unknown label
+# -- it only knows the GitHub-hosted set. That noise is why the lint step is easy
+# to ignore; declaring the labels makes a red actionlint mean something again.
+#
+# Only labels this repo actually selects on are listed. Declaring a label nobody
+# uses trains the next person to add one.
+#
+#   builder02 : the build host label (self-hosted runner pool)
+#   lxc       : LXC-container runners -- pure build/CPU work, no Docker daemon
 self-hosted-runner:
   labels:
     - builder02
     - lxc
-    - docker

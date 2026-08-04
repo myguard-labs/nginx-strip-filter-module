@@ -1,4 +1,4 @@
-# sync-sha: 90311b2c5fcb38ae231232f78c4a8f65711c5927c474c25d2f3191f67286f451
+# sync-sha: 9f261a1246070e6c185656df58a9c19ac07033ce558a04470dce65d68d45b86d
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -15,11 +15,9 @@ env:
   NGINX_VERSION: "1.31.1"
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-  workflow_dispatch: {}
+  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
+  # bounded. No push/pull_request trigger here on purpose: two entry points
+  # would run this twice per PR and defeat the laning.
   workflow_call: {}
 
 concurrency:

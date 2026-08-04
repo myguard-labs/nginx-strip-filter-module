@@ -1,4 +1,4 @@
-# sync-sha: 385a1dd53dc88c9c1fa4ba218daa7650298318d9bd52d0285b2868579f666ede
+# sync-sha: 5caf32e2ce2b2729adc517184b1c621eb6f418252b5fc80c4c229e01e6c9b638
 name: Valgrind
 
 # Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
@@ -15,11 +15,9 @@ env:
   NGINX_VERSION: "1.31.1"
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-  workflow_dispatch: {}
+  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
+  # bounded. No push/pull_request trigger here on purpose: two entry points
+  # would run this twice per PR and defeat the laning.
   workflow_call: {}
 
 concurrency:

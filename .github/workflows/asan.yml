@@ -1,0 +1,66 @@
+# sync-sha: c3e2f581e2d37d94a5ea707e3c8bc14c26389c9bd7a31c65127a052b046a5b55
+name: A/UBSan
+
+# Dedicated ASan+UBSan run on every PR/push -- the Test::Nginx ci/t/ suite run
+# once under a static ASan+UBSan nginx build. This is the same check that used
+# to be the `asan` job inside build-test.yml; it moves to its own workflow so
+# it can be laned/cancelled independently and so build-test.yml stays about
+# the plain debug build, not sanitizers.
+#
+# The asan build is a STATIC --add-module binary (ci-build.sh's `asan` mode
+# switches from --add-dynamic-module to --add-module), so the sanitizer
+# runtime is present on every code path -- there is no separate .so to load.
+#
+# Why this exists alongside the Valgrind job: ASan is fast enough to run the
+# full ci/t/ suite on every PR and catches heap overflow / UAF outside
+# nginx's pool blocks; Valgrind (much slower) still catches uninitialised
+# reads and intra-pool UAF that ASan cannot see. They are complementary, not
+# redundant -- see valgrind.yml.
+#
+# Action pins (keep in sync with build-test.yml / valgrind.yml headers):
+# actions/checkout@v5 -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NGINX_VERSION: "1.31.1"
+
+on:
+  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
+  # bounded. No push/pull_request trigger here on purpose: two entry points
+  # would run this twice per PR and defeat the laning.
+  workflow_call: {}
+
+concurrency:
+  group: asan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  asan:
+    name: ASan and UBSan (ci/t/ suite)
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl libpcre2-dev zlib1g-dev cpanminus \
+            libio-socket-ssl-perl
+          sudo cpanm --notest --quiet Test::Nginx
+
+      - name: Build with sanitizers
+        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" asan
+
+      - name: Run Test::Nginx suite under ASan and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
+          TEST_NGINX_BINARY: ${{ github.workspace }}/.build/nginx-${{ env.NGINX_VERSION }}/objs/nginx
+        run: prove -v ci/t/

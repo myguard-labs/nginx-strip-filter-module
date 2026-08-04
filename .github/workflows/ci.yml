@@ -1,12 +1,12 @@
-# sync-sha: cdef8e449fb22c0993a18b03412e87c9a1938dced694682187d1b678ee9e6eae
+# sync-sha: eaeb85536df907f8392b5a5334cf826e54442400abf1548f1d91af98457a7929
 name: CI
 
 # Single entry point for the PR suite.
 #
-# The five checks below each carried their own push/pull_request trigger, so a
+# The six checks below each carried their own push/pull_request trigger, so a
 # PR asked for all of them at once. This orchestrator calls them instead, which
 # is what makes lane arrangement possible at all: a caller can order its members
-# with `needs:`, five independent workflows cannot be ordered by anything.
+# with `needs:`, independent workflows cannot be ordered by anything.
 #
 # INTERMEDIATE STATE: the members still carry their own pull_request: triggers,
 # so every member currently runs TWICE on a PR -- once standalone, once called.
@@ -20,6 +20,16 @@ name: CI
 # numbers are the reference's, not this repo's. Lanes get built here after this
 # repo's own job durations are measured. Until then every member starts
 # immediately, which is the current behaviour and no worse than it.
+#
+# asan.yml IS a PR-lane member, called unconditionally (no path-filter gate).
+# The reference gates it behind a changed-files filter because its 149s
+# sanitizer job is otherwise wasted on docs-only PRs, but that gate is a lane-
+# budget optimization, not a correctness requirement, and this repo has no
+# equivalent changed-files job yet. Unconditional is also strictly no
+# regression: this same Test::Nginx-under-ASan check previously ran
+# unconditionally as build-test.yml's own `asan` job on every PR; moving it to
+# its own workflow must not make it run less often. Add a path filter here in
+# a follow-up once this repo's lanes are actually being measured/built.
 #
 # No push: trigger, by repo policy: CI runs on the PR, and the merge commit is
 # identical to the tested PR head, so re-running it on merge buys nothing.
@@ -47,6 +57,12 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/build-test.yml
+
+  asan:
+    name: A/UBSan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/asan.yml
 
   fuzzing:
     name: Fuzzing

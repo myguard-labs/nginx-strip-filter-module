@@ -1,4 +1,4 @@
-# sync-sha: bf3e442b443461977544cf1675d21f870ac0df692305793378a69a9f0b4e9f0c
+# sync-sha: d5a64917024ac0d7b1752db46711a03f2c059a9fa105eab28e7e195c39eb67e7
 name: Build and Test
 
 env:
@@ -6,11 +6,9 @@ env:
   NGINX_VERSION: "1.31.1"
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
-  workflow_dispatch: {}
+  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
+  # bounded. No push/pull_request trigger here on purpose: two entry points
+  # would run this twice per PR and defeat the laning.
   workflow_call: {}
 
 concurrency:

@@ -1,4 +1,4 @@
-# sync-sha: 65aa3199bade51f9dde7d057f56b2746c9bf486fd456ca1139bc44a6bb06534c
+# sync-sha: c3e0a9b8bb33ab731ac5c608e9386a7dc21c2bde961b4ddbb43eee2a510e718a
 name: CodeQL
 
 env:
@@ -6,13 +6,11 @@ env:
   NGINX_VERSION: "1.31.1"
 
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
   schedule:
     - cron: "47 4 3 * *"
-  workflow_dispatch: {}
+  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
+  # bounded. No push/pull_request trigger here on purpose: two entry points
+  # would run this twice per PR and defeat the laning.
   workflow_call: {}
 
 concurrency:

@@ -96,6 +96,55 @@ Or use `tools/ci-build.sh` which downloads and builds nginx automatically:
 bash tools/ci-build.sh nginx 1.31.1
 ```
 
+## Testing
+
+Two suites, deliberately separate.
+
+**Core unit tests** — `strip_core.c` has no nginx dependency, so its state
+machines are driven directly. No server, no Perl, no network; the whole suite
+runs in well under a second and emits TAP.
+
+```bash
+cc -std=c11 -Wall -Wextra -Werror -I. -o /tmp/t t/strip_core_test.c strip_core.c && /tmp/t
+```
+
+**Request-path tests** — `t/basic.t` drives the filter through a real nginx via
+`Test::Nginx::Socket`, which is the right instrument for directive handling,
+content types and buffering.
+
+```bash
+TEST_NGINX_BINARY=/path/to/nginx \
+TEST_NGINX_LOAD_MODULES=/path/to/ngx_http_strip_filter_module.so \
+prove -v t/
+```
+
+### Coverage
+
+The goal is 100% coverage of `strip_core.c`; the current figure is **99.79%**,
+with the single uncovered line carrying a `COVERAGE:` comment explaining why it
+is unreachable. That is the standard: every uncovered line either gets a real
+test or an honest note.
+
+```bash
+work=$(mktemp -d)
+gcc -O0 -g --coverage -std=c11 -I. -o "$work/t" t/strip_core_test.c strip_core.c
+"$work/t" >/dev/null
+gcov -o "$work" "$work/t-strip_core.gcda"
+grep -n '#####' strip_core.c.gcov     # lines still needing a test or a note
+```
+
+There is **no coverage-percent gate in CI, by design.** The fastest way to move
+a coverage number is a test that executes lines without asserting anything. The
+gate that matters is the control mutation: every test group in
+`t/strip_core_test.c` names, in a comment, a one-line change to `strip_core.c`
+that makes that group fail. A test whose control does not red it covers the line
+and proves nothing. Two cases in this suite were caught being vacuous exactly
+that way, and both comments record what the control taught us.
+
+The method is documented in full at
+[nginx-test-harness/docs/COVERAGE.md](https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE.md)
+and [COVERAGE-HOWTO.md](https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE-HOWTO.md).
+
 ## Installing from deb.myguard.nl
 
 ```bash

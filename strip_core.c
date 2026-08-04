@@ -439,7 +439,16 @@ js_regex_allowed(const unsigned char *dst, size_t o)
 {
     size_t k = o;
 
-    /* skip trailing spaces we already emitted */
+    /* Skip trailing spaces we already emitted.
+     *
+     * COVERAGE: the loop body is unreachable with the current caller, and is
+     * kept as a defensive precondition rather than deleted. strip_js() only
+     * ever puts a space into dst via js_flush_pending(), and every call site
+     * emits a non-space token immediately afterwards, so dst[o-1] is never ' '
+     * at the one call to this function (strip_js, at the `/` branch — note it
+     * passes dst/o BEFORE its own flush). A future caller that flushes
+     * separately from emitting would reach it, and without this loop such a
+     * caller would silently read a space as "regex allowed". */
     while (k > 0 && dst[k - 1] == ' ') {
         k--;
     }

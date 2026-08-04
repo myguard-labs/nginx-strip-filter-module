@@ -1,4 +1,4 @@
-# sync-sha: 3109e33572537f9efff4d43bd8ce5f9df74a92997f8d7fb9469fe01fe33b65eb
+# sync-sha: 65aa3199bade51f9dde7d057f56b2746c9bf486fd456ca1139bc44a6bb06534c
 name: CodeQL
 
 env:
@@ -16,7 +16,12 @@ on:
   workflow_call: {}
 
 concurrency:
-  group: codeql-${{ github.ref }}
+  # github.workflow is part of the group for the same reason it is in every
+  # other member: a called workflow inherits the CALLER's github.workflow, so
+  # including it puts the standalone run and the ci.yml-called run in different
+  # groups. Without it both compute "codeql-<ref>", and cancel-in-progress makes
+  # one kill the other -- which reads as "CodeQL was never called".
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

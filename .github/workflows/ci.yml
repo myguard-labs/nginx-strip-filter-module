@@ -1,0 +1,76 @@
+# sync-sha: cdef8e449fb22c0993a18b03412e87c9a1938dced694682187d1b678ee9e6eae
+name: CI
+
+# Single entry point for the PR suite.
+#
+# The five checks below each carried their own push/pull_request trigger, so a
+# PR asked for all of them at once. This orchestrator calls them instead, which
+# is what makes lane arrangement possible at all: a caller can order its members
+# with `needs:`, five independent workflows cannot be ordered by anything.
+#
+# INTERMEDIATE STATE: the members still carry their own pull_request: triggers,
+# so every member currently runs TWICE on a PR -- once standalone, once called.
+# That double-run is deliberate and is the proof that this call graph is wired:
+# a member that runs only once was never called, and removing its own trigger
+# would silence it completely. The triggers come off in the next commit, once
+# the double-run has been observed on a real PR.
+#
+# NOT laned yet. The reference arranges its members into lanes sized against its
+# own measured job durations and its build host's ephemeral slot count; those
+# numbers are the reference's, not this repo's. Lanes get built here after this
+# repo's own job durations are measured. Until then every member starts
+# immediately, which is the current behaviour and no worse than it.
+#
+# No push: trigger, by repo policy: CI runs on the PR, and the merge commit is
+# identical to the tested PR head, so re-running it on merge buys nothing.
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  # "orchestrator-", not "ci-": build-test.yml already uses
+  # ci-${{ github.workflow }}-${{ github.ref }}, and a called workflow inherits
+  # the caller's github.workflow/github.ref -- so an identical group string
+  # makes a member cancel its own caller, and the call dies before it starts a
+  # single job. The prefix is what keeps the two apart.
+  group: orchestrator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build&Test
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-test.yml
+
+  fuzzing:
+    name: Fuzzing
+    permissions:
+      contents: read
+    uses: ./.github/workflows/fuzzing.yml
+
+  valgrind:
+    name: Valgrind
+    permissions:
+      contents: read
+    uses: ./.github/workflows/valgrind.yml
+
+  security-scanners:
+    name: Security scanners
+    permissions:
+      contents: read
+    uses: ./.github/workflows/security-scanners.yml
+
+  codeql:
+    name: CodeQL
+    permissions:
+      contents: read
+      # Granted per-job, not at workflow level: no other job here needs either.
+      security-events: write  # CodeQL uploads its SARIF to code scanning
+      actions: read  # the CodeQL action reads run metadata to attribute results
+    uses: ./.github/workflows/codeql.yml

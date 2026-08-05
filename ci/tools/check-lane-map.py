@@ -44,7 +44,13 @@ DOCUMENTED_NEEDS = {
     "build-test": [],
     "fuzzing": ["build-test"],
     "asan": ["fuzzing"],
-    "valgrind": [],
+    # No "valgrind" entry: valgrind.yml was removed from the PR lane on
+    # 2026-08-05 (it was the 769s budget-setter). It runs on its own weekly
+    # cron + workflow_dispatch instead. If a future edit re-adds a `valgrind:`
+    # job to ci.yml, this map has no entry for it and the check fails with
+    # "exists in ci.yml but is not in the documented lane map" -- which is the
+    # correct outcome: re-laning valgrind is a deliberate decision that must
+    # update this map and ci.yml's header together, not a silent restore.
     "security-scanners": ["build-test"],
     "codeql": [],
 }

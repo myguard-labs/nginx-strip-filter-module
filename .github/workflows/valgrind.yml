@@ -1,9 +1,28 @@
-# sync-sha: 888c2390a414a1e6cfd87b02e7eeb0daaf96a6d29d38755314171eec91b53e5f
+# sync-sha: 808ddc532d6f2afd7ee5d19036a8c2eaf77ead442f525a286da789848f318450
 name: Valgrind
 
-# Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
-# once under valgrind memcheck. The full memcheck + helgrind soak lives in
-# ci-deep.yml (monthly cron + workflow_dispatch).
+# Valgrind memcheck lite soak — the Test::Nginx ci/t/ suite run once under
+# valgrind memcheck. The full memcheck + helgrind soak lives in ci-deep.yml
+# (monthly cron + workflow_dispatch).
+#
+# NOT A PR-LANE MEMBER, on purpose. This ran as a ci.yml member until
+# 2026-08-05; it was the PR lane's budget-setter at 769s measured (run
+# 31008062208), and with queueing the whole PR suite took 13-15 min (worst
+# observed 24 min) with this job's "Memcheck lite" leg alone at 12:57. Every PR
+# in the repo paid that. The job itself is UNCHANGED -- same suite, same
+# suppressions file, same --error-exitcode=99, same leak kinds, same log grep.
+# Only its trigger moved: weekly cron + workflow_dispatch instead of per-PR.
+#
+# This is a DELIBERATE DIVERGENCE from the nginx-skeleton-module reference,
+# which keeps valgrind in the PR lane. Do not "restore" it as accidental drift
+# -- see memory/labs/nginx-strip-filter-module/skeleton-findings.md (F-VG) and
+# CI_PERFORMANCE.md. Memory-error detection on the merge path is still covered
+# per-PR by asan.yml (ASan+UBSan over the same ci/t/ suite, halt_on_error=1);
+# valgrind adds leak-kind and uninitialised-read classes ASan does not, which
+# is why it is preserved weekly rather than deleted.
+#
+# Run it on demand against a branch before merging anything memory-relevant:
+#   gh workflow run valgrind.yml -R myguard-labs/nginx-strip-filter-module --ref <branch>
 #
 # Action pins (keep in sync with build-test.yml header):
 # actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -17,9 +36,15 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
-  # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
-  # bounded. No push/pull_request trigger here on purpose: two entry points
-  # would run this twice per PR and defeat the laning.
+  schedule:
+    # Weekly, Wednesday @ 02:15 UTC. Staggered off every other schedule in this
+    # repo so the 4-slot builder02 ceiling is never contended: bump.yml is Mon
+    # 04:00, codeql.yml is day-4 04:47, ci-deep.yml is day-6 03:30.
+    - cron: "15 2 * * 3"
+  workflow_dispatch: {}
+  # workflow_call is retained so ci-deep.yml or a future orchestrator can still
+  # invoke this file directly. No push/pull_request trigger: this is
+  # deliberately off the merge path (see header).
   workflow_call: {}
 
 concurrency:

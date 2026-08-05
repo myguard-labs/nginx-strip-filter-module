@@ -92,12 +92,52 @@ This timing represents the **main CI suite** triggered on every PR/push via `ci.
 
 - `.github/workflows/build-test.yml` — Build, Validation, Core unit tests, Test::Nginx
 - `.github/workflows/asan.yml` — A/UBSan suite
-- `.github/workflows/valgrind.yml` — Valgrind Memcheck lite
 - `.github/workflows/security-scanners.yml` — Security scanners, Linter
 - `.github/workflows/codeql.yml` — CodeQL Analyze C
 - `.github/workflows/fuzzing.yml` — Fuzz regression
 
 Deep/extended checks (monthly cron, full Memcheck+Helgrind, longer fuzz runs) live in `ci-deep.yml` and are not captured here.
+
+## 2026-08-05 — Valgrind removed from the PR lane
+
+The table above is the **pre-change** measurement and stays as the baseline. It
+is also the evidence for the change: `Valgrind Memcheck lite` at 769s execution
+was 2.5x the entire rest of the critical path, and with queueing the PR suite
+took 13–15 minutes typically and 24 minutes at worst. Every PR paid it, for a
+check whose findings change at roughly weekly cadence, not per-commit.
+
+`valgrind.yml` is no longer called by `ci.yml`. It now runs on `schedule`
+(weekly, Wed 02:15 UTC) plus `workflow_dispatch`, and retains `workflow_call`.
+
+**Depth is unchanged.** Same `prove -v ci/t/` suite, same
+`ci/tools/valgrind.supp`, same `--tool=memcheck --track-origins=yes
+--leak-check=full --show-leak-kinds=definite,indirect
+--errors-for-leak-kinds=definite,indirect --error-exitcode=99`, same
+`ERROR SUMMARY` log grep. Only the trigger moved.
+
+**Per-PR memory-safety coverage that remains:** `asan.yml` runs the same
+`ci/t/` suite under ASan+UBSan with `halt_on_error=1:abort_on_error=1` and
+`-fno-sanitize-recover=undefined`. Valgrind still contributes leak-kind
+accounting and uninitialised-read detection that ASan does not, which is why it
+is preserved on a schedule rather than deleted.
+
+**Run it on demand before merging anything memory-relevant:**
+
+```
+gh workflow run valgrind.yml -R myguard-labs/nginx-strip-filter-module --ref <branch>
+```
+
+New PR-lane shape: Lane B (`build-test` → `fuzzing` → `asan`, ~313s) is the
+budget-setter; Lane C (`security-scanners`, ~111s) runs alongside; `codeql` is
+GitHub-hosted and off-lane. Peak self-hosted demand drops from 4 to 3 against
+the 4-slot `builder02` ceiling.
+
+This is a **deliberate divergence** from the `nginx-skeleton-module` reference,
+which keeps valgrind in the PR lane. `ci/tools/check-lane-map.py` has no
+`valgrind` entry, so re-adding a `valgrind:` job to `ci.yml` fails the
+`Lane map sanity` gate rather than passing silently — restoring it must be a
+decision, not drift. See also
+`memory/labs/nginx-strip-filter-module/skeleton-findings.md` (F-VG).
 
 ## Notes
 

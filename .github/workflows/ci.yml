@@ -1,38 +1,49 @@
-# sync-sha: 608d154000ea7580523a3d4a53ff7e38b80cb3d6e1bc4bedca1fed770abf03a6
+# sync-sha: e4d2e0fb909e705215d0a598e746f8569ca532266c764c224d4770d04695b383
 name: CI
 
 # Single entry point for the PR suite.
 #
-# The six checks below each carried their own push/pull_request trigger, so a
+# The checks below each carried their own push/pull_request trigger, so a
 # PR asked for all of them at once. This orchestrator calls them instead, which
 # is what makes lane arrangement possible at all: a caller can order its members
 # with `needs:`, independent workflows cannot be ordered by anything.
 #
 # All members (asan.yml, fuzzing.yml, security-scanners.yml, codeql.yml,
-# build-test.yml, valgrind.yml) are workflow_call:-only; they run exactly once
-# per PR, via this orchestrator, with no independent pull_request: trigger.
+# build-test.yml) are workflow_call:-only; they run exactly once per PR, via
+# this orchestrator, with no independent pull_request: trigger.
+#
+# VALGRIND IS NOT A MEMBER, as of 2026-08-05. valgrind.yml was Lane A and the
+# budget-setter at 769s measured; it dominated the whole PR suite (13-15 min
+# typical, 24 min worst) for a job whose findings are weekly-cadence
+# information, not per-commit information. It now runs on its own weekly cron
+# plus workflow_dispatch, UNCHANGED in depth -- same suite, suppressions,
+# error-exitcode and leak kinds. This is a deliberate divergence from the
+# nginx-skeleton-module reference, which lanes valgrind per-PR; do not restore
+# it here as accidental drift. Rationale and per-PR memory-safety coverage that
+# remains (asan.yml) are in valgrind.yml's header and CI_PERFORMANCE.md.
 #
 # LANED. Self-hosted slot ceiling is 4 (builder02-runner-01..04, org-registered).
-# Budget = longest job = Valgrind at 769s (measured run 31008062208, 2026-08-05).
-# Reproduce with:
+# Budget = longest lane = Lane B at ~313s (measured run 31008062208,
+# 2026-08-05). Reproduce with:
 #   gh api repos/myguard-labs/nginx-strip-filter-module/actions/runs/31008062208/jobs \
 #     --jq '.jobs[] | "\(.name)\t\(.started_at)\t\(.completed_at)"'
 # See also CI_PERFORMANCE.md. Lane map:
 #
-#   Lane A -- valgrind: UNCHAINED (no needs:). 769s, this is the budget-setter;
-#     chaining it would exceed the budget.
 #   Lane B -- build-test (unchained, fans out to 3 concurrent self-hosted jobs:
 #     Validation 24s, Build 30s, unit-core 16s; then Test::Nginx 45s needs:
 #     build) -> fuzzing (needs: build-test, 149s) -> asan (needs: fuzzing, 65s).
-#     Lane total ~= 313s.
+#     Lane total ~= 313s. This is now the budget-setter.
 #   Lane C -- security-scanners (needs: build-test, 76s + Linter 35s).
 #     Lane total ~= 111s.
 #   Off-lane -- codeql: runs on ubuntu-latest (GitHub-hosted). Not laned, no
 #     needs: -- hosted jobs are not laned.
 #
-# Peak self-hosted demand = Lane A (1) + Lane B's build-test fan-out (3) = 4,
-# exactly the ceiling. Fullest-lane headroom = 769 - 313 = 456s. The `changes`
-# job below adds a brief 5th self-hosted slot; see its comment.
+# Lane A is retired with valgrind's removal; Lane B and C keep their letters so
+# this map stays diffable against the pre-2026-08-05 shape.
+#
+# Peak self-hosted demand = Lane B's build-test fan-out (3), one below the
+# ceiling. Fullest-lane headroom = 313 - 111 = 202s. The `changes` job below
+# adds a brief 4th self-hosted slot; see its comment.
 #
 # asan.yml IS a PR-lane member, called unconditionally (no path-filter gate).
 # The reference gates it behind a changed-files filter because its 149s
@@ -98,12 +109,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/asan.yml
-
-  valgrind:
-    name: Valgrind
-    permissions:
-      contents: read
-    uses: ./.github/workflows/valgrind.yml
 
   security-scanners:
     name: Security scanners

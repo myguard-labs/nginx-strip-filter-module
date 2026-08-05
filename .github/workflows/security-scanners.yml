@@ -1,4 +1,4 @@
-# sync-sha: 4ab512e39b127f5a991c52c012cdeccc19b6e0dc4da77bf3ee5f588b5c2752a3
+# sync-sha: 1ae2347978de468843cd3c13a4c66692920eb2534ec3be6149578179eabca497
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -134,7 +134,16 @@ jobs:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Install linters
-        run: bash ci/linter/install.sh
+        run: |
+          bash ci/linter/install.sh
+          # install.sh drops actionlint (and a pip --user semgrep) into
+          # ~/.local/bin and deliberately does not touch the caller's
+          # environment -- it has to work the same from a shell, a hook and
+          # here. On a runner that dir is not on PATH by default, so
+          # run-all.sh would correctly report the tool missing and exit 2.
+          # Export it for the later steps rather than making the installer
+          # CI-aware.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:

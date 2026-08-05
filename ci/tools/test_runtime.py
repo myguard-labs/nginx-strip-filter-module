@@ -45,7 +45,7 @@ caught by name.
 Usage:
     ci/tools/test_runtime.py --nginx .build/nginx-<v>/objs/nginx \\
         --module .build/nginx-<v>/objs/ngx_http_strip_filter_module.so \\
-        [--port 19400] [-k PATTERN] [-v]
+        [--port 19240] [-k PATTERN] [-v]
 
 --port is the BASE of a 64-wide band this run owns end to end, per the
 per-job port-band convention this repo already uses for ci/t/ (see
@@ -88,7 +88,6 @@ import argparse
 import http.client
 import os
 import pathlib
-import re
 import shutil
 import signal
 import socket
@@ -140,7 +139,7 @@ class SeamUpstream:
         while not self._stop:
             try:
                 conn, _ = self._sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
@@ -444,14 +443,14 @@ class ConcurrentUpstream:
         while not self._stop:
             try:
                 conn, _ = self._sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
     def _handle(self, conn: socket.socket) -> None:
-        idx, (ctype, raw, _want) = self._next_case()
+        _idx, (ctype, raw, _want) = self._next_case()
         try:
             conn.settimeout(5.0)
             conn.recv(65536)
@@ -532,7 +531,7 @@ class ReloadUpstream:
         while not self._stop:
             try:
                 conn, _ = self._sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return

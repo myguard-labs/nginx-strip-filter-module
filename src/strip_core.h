@@ -39,10 +39,4 @@ size_t strip_minify(strip_kind_t kind,
                     const unsigned char *src, size_t len,
                     unsigned char *dst);
 
-/*
- * Return the count of strip_minify() invocations since the process started.
- * Used to verify sanitizer test coverage reaches the minify core.
- */
-unsigned long strip_minify_call_count(void);
-
 #endif /* STRIP_CORE_H */

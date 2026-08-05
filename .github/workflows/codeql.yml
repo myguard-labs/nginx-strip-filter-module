@@ -1,4 +1,4 @@
-# sync-sha: 81238358d93a5b4fd3974c346b50dcc82c5635bb346597ad0248dc2e7e70dca9
+# sync-sha: ce47c3450d4c35e0d599ab08862f236c2c0bf0e87ade91fc7d25dc8d47424bd7
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -83,7 +83,11 @@ jobs:
       # during build" -- while the build itself looks fine. Tracing needs a
       # real compile every run; ccache and the CodeQL job are incompatible.
       - name: Build traced source (module only)
-        run: NO_CACHE=1 bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" module
+        # PROBE (temporary, reverted before merge): simulate a path filter
+        # that selects nothing by tracing a build that compiles zero files.
+        # Must make the TU-count gate fail red -- proves the gate actually
+        # gates instead of silently passing on an empty database.
+        run: 'true'
 
       - name: Analyze
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4

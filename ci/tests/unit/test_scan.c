@@ -88,6 +88,40 @@ is_min(strip_kind_t kind, const char *in, const char *want, const char *name)
     printf("#    got (%zu): %.*s\n", n, (int) n, out);
 }
 
+/*
+ * Same as is_min() but with an explicit flags value, for cases that must
+ * assert different output for flags=0 (conservative) vs STRIP_F_AGGRESSIVE.
+ */
+static void
+is_min_flags(strip_kind_t kind, unsigned flags, const char *in,
+             const char *want, const char *name)
+{
+    unsigned char out[8192];
+    size_t in_len = strlen(in);
+    size_t want_len = strlen(want);
+    size_t n;
+
+    memset(out, 0, sizeof(out));
+    n = strip_minify(kind, (const unsigned char *) in, in_len, out, flags);
+
+    if (n > in_len) {
+        printf("not ok %d - %s\n", ++plan_n, name);
+        printf("#   OUTPUT LONGER THAN INPUT: %zu > %zu (buffer overflow)\n",
+               n, in_len);
+        plan_failed++;
+        return;
+    }
+
+    if (n == want_len && memcmp(out, want, n) == 0) {
+        tap(1, name);
+        return;
+    }
+
+    tap(0, name);
+    printf("#   want (%zu): %s\n", want_len, want);
+    printf("#    got (%zu): %.*s\n", n, (int) n, out);
+}
+
 /* Assert only the invariant — for inputs whose exact output is not specified
  * (truncated/malformed), where the contract is "do not overflow, do not hang". */
 static void
@@ -239,30 +273,59 @@ test_css_hex(void)
  *
  * CONTROL: in strip_css(), change the standalone-zero guard
  *     if ((prev2 < '0' || prev2 > '9') && prev2 != '.')  ->  if (1)
- * `10px` then becomes `10`, reddening "css: 10px keeps its unit".
+ * `10px` then becomes `10`, reddening "css: 10px keeps its unit" (AGGRESSIVE
+ * case, which is the one that still exercises css_skip_zero_unit()).
+ *
+ * AUD-01 (gate PR): css_skip_zero_unit() strips a unit even where a bare
+ * number is INVALID syntax, e.g. `@media (min-width:0px)` -> `(min-width:0)`.
+ * It only fires under STRIP_F_AGGRESSIVE now; flags=0 keeps the unit.
  */
 
 static void
 test_css_numbers(void)
 {
-    /* CSS Values 3 § 6.2: a zero <length> may omit its unit. */
-    is_min(STRIP_CSS, "a{margin:0px}", "a{margin:0}", "css: 0px -> 0");
-    is_min(STRIP_CSS, "a{margin:0rem}", "a{margin:0}", "css: 0rem -> 0");
-    is_min(STRIP_CSS, "a{width:0vmin}", "a{width:0}", "css: 0vmin -> 0");
-    is_min(STRIP_CSS, "a{margin:0PX}", "a{margin:0}", "css: unit match is case-insensitive");
+    /* CSS Values 3 § 6.2: a zero <length> may omit its unit — but only in
+     * AGGRESSIVE mode; the transform is not safe in every grammar position
+     * (see AUD-01 below), so conservative mode (flags=0) keeps the unit. */
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0px}", "a{margin:0}",
+                 "css: 0px -> 0 (aggressive)");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0rem}", "a{margin:0}",
+                 "css: 0rem -> 0 (aggressive)");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{width:0vmin}", "a{width:0}",
+                 "css: 0vmin -> 0 (aggressive)");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0PX}", "a{margin:0}",
+                 "css: unit match is case-insensitive (aggressive)");
+
+    /* Conservative (default) mode: the unit is kept. */
+    is_min(STRIP_CSS, "a{margin:0px}", "a{margin:0px}",
+           "css: 0px keeps its unit with flags=0");
+
+    /* AUD-01: the confirmed-lossy case — a media-query bare zero is invalid
+     * syntax, so this must NEVER strip under flags=0, and DOES strip under
+     * AGGRESSIVE (old, still-available behaviour). */
+    is_min(STRIP_CSS, "@media (min-width:0px){a{color:red}}",
+           "@media (min-width:0px){a{color:red}}",
+           "css: AUD-01 media-query zero-unit NOT stripped with flags=0");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE,
+                 "@media (min-width:0px){a{color:red}}",
+                 "@media (min-width:0){a{color:red}}",
+                 "css: AUD-01 media-query zero-unit stripped under AGGRESSIVE");
 
     /* Longest-match matters: `0vmin` must not be read as `0vm` + `in`, and
      * `0em` must not be read as `0e` + `m`. */
-    is_min(STRIP_CSS, "a{margin:0vmax}", "a{margin:0}", "css: 0vmax -> 0 (not 0vm+ax)");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0vmax}", "a{margin:0}",
+                 "css: 0vmax -> 0 (not 0vm+ax) (aggressive)");
 
     /* Only a STANDALONE zero. The unit belongs to the whole number. */
-    is_min(STRIP_CSS, "a{margin:10px}", "a{margin:10px}", "css: 10px keeps its unit");
-    is_min(STRIP_CSS, "a{margin:1.0px}", "a{margin:1.0px}", "css: 1.0px keeps its unit");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:10px}", "a{margin:10px}",
+                 "css: 10px keeps its unit (aggressive)");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:1.0px}", "a{margin:1.0px}",
+                 "css: 1.0px keeps its unit (aggressive)");
 
     /* The unit must be followed by a token boundary, or it is an identifier
      * prefix and not a unit at all (`0inch` is not `0` + `in`). */
-    is_min(STRIP_CSS, "a{margin:0inch}", "a{margin:0inch}",
-           "css: 0inch is not 0in + boundary");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0inch}", "a{margin:0inch}",
+                 "css: 0inch is not 0in + boundary (aggressive)");
 
     /* A unit ending exactly at end-of-input is also a boundary — end of input
      * is as much a token boundary as `;` or `}`, so a truncated declaration
@@ -274,10 +337,12 @@ test_css_numbers(void)
      * "css: unit stripped when input ends exactly at the unit" reds — output
      * stays `a{margin:0px` (13 bytes) instead of the stripped `a{margin:0`
      * (10 bytes). */
-    is_min(STRIP_CSS, "a{margin:0px", "a{margin:0",
-           "css: unit stripped when input ends exactly at the unit");
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0px", "a{margin:0",
+                 "css: unit stripped when input ends exactly at the unit (aggressive)");
 
-    /* CSS Values 3 § 5: a <number> may omit the integer part when it is zero. */
+    /* CSS Values 3 § 5: a <number> may omit the integer part when it is zero.
+     * NOT gated (leading-zero strip, distinct from unit stripping) — applies
+     * the same in both modes. */
     is_min(STRIP_CSS, "a{opacity:0.5}", "a{opacity:.5}", "css: 0.5 -> .5");
 
     /* ...but only when the 0 is not itself part of a longer number or ident. */
@@ -626,8 +691,18 @@ test_html_structure(void)
 {
     is_min(STRIP_HTML, "<p>a</p>\n\n<p>b</p>", "<p>a</p><p>b</p>",
            "html: inter-tag whitespace removed");
-    is_min(STRIP_HTML, "<p>Hello   world</p>", "<p>Hello world</p>",
-           "html: text whitespace collapsed to one space");
+
+    /* AUD-04 (gate PR): collapsing text-node whitespace assumes ordinary
+     * flow layout; HTML markup carries no `white-space: pre`/`pre-wrap` CSS
+     * signal this byte-level filter can see, so the collapse is only safe
+     * under STRIP_F_AGGRESSIVE. Conservative mode (flags=0) copies the run
+     * verbatim. */
+    is_min(STRIP_HTML, "<p>Hello   world</p>", "<p>Hello   world</p>",
+           "html: AUD-04 text whitespace NOT collapsed with flags=0");
+    is_min_flags(STRIP_HTML, STRIP_F_AGGRESSIVE, "<p>Hello   world</p>",
+                 "<p>Hello world</p>",
+                 "html: AUD-04 text whitespace collapsed under AGGRESSIVE");
+
     is_min(STRIP_HTML, "<!-- c --><p>a</p>", "<p>a</p>", "html: comment removed");
 
     /* Bodies that are whitespace-significant survive verbatim. */
@@ -642,11 +717,16 @@ test_html_structure(void)
            "<script>var s=\"<!-- x -->\";</script>",
            "html: comment marker inside a script string survives");
 
-    /* Text before a tag is a text node: `a <b>` is not `a<b>` in rendering,
-     * so the run collapses to one space rather than vanishing. Only inter-tag
-     * whitespace ('>' … '<') is safe to drop entirely. */
-    is_min(STRIP_HTML, "<p>text   <b>x</b></p>", "<p>text <b>x</b></p>",
-           "html: space between text and a tag kept as one");
+    /* Text before a tag is a text node: `a <b>` is not `a<b>` in rendering.
+     * Under AGGRESSIVE the run still collapses to one space rather than
+     * vanishing (only inter-tag whitespace, '>' … '<', is dropped entirely).
+     * Under flags=0 (AUD-04) the run is left verbatim, same as any other
+     * text-node whitespace. */
+    is_min(STRIP_HTML, "<p>text   <b>x</b></p>", "<p>text   <b>x</b></p>",
+           "html: text-tag whitespace kept verbatim with flags=0");
+    is_min_flags(STRIP_HTML, STRIP_F_AGGRESSIVE, "<p>text   <b>x</b></p>",
+                 "<p>text <b>x</b></p>",
+                 "html: space between text and a tag kept as one (aggressive)");
 
     /* A raw-text element's closing tag is recognised with trailing whitespace
      * or a slash inside it, not only as an exact `</script>`. Missing that
@@ -714,14 +794,27 @@ test_svg_xml(void)
            "xml: comment removed");
 
     /* XML text nodes are whitespace-sensitive, so only the '>' … '<' run is
-     * safe to drop; a run adjacent to text collapses to one space instead of
-     * vanishing. `<a>x <b/></a>` losing its space changes the character data. */
-    is_min(STRIP_XML, "<a>x   <b/></a>", "<a>x <b/></a>",
-           "xml: space between text and a tag kept as one");
-    is_min(STRIP_XML, "<a><b/>   x</a>", "<a><b/> x</a>",
-           "xml: space between a tag and text kept as one");
-    is_min(STRIP_SVG, "<text>a   b</text>", "<text>a b</text>",
-           "svg: text-node run collapses to one space");
+     * safe to drop. Under AGGRESSIVE a run adjacent to text still collapses
+     * to one space rather than vanishing (`<a>x <b/></a>` losing its space
+     * entirely would change the character data). AUD-03 (gate PR): with no
+     * xml:space="preserve" awareness, collapsing even to one space can still
+     * corrupt a document that declared the run significant, so flags=0 keeps
+     * it byte-for-byte instead. */
+    is_min(STRIP_XML, "<a>x   <b/></a>", "<a>x   <b/></a>",
+           "xml: AUD-03 text-tag whitespace kept verbatim with flags=0");
+    is_min_flags(STRIP_XML, STRIP_F_AGGRESSIVE, "<a>x   <b/></a>",
+                 "<a>x <b/></a>",
+                 "xml: space between text and a tag kept as one (aggressive)");
+    is_min(STRIP_XML, "<a><b/>   x</a>", "<a><b/>   x</a>",
+           "xml: AUD-03 tag-text whitespace kept verbatim with flags=0");
+    is_min_flags(STRIP_XML, STRIP_F_AGGRESSIVE, "<a><b/>   x</a>",
+                 "<a><b/> x</a>",
+                 "xml: space between a tag and text kept as one (aggressive)");
+    is_min(STRIP_SVG, "<text>a   b</text>", "<text>a   b</text>",
+           "svg: AUD-03 text-node run NOT collapsed with flags=0");
+    is_min_flags(STRIP_SVG, STRIP_F_AGGRESSIVE, "<text>a   b</text>",
+                 "<text>a b</text>",
+                 "svg: text-node run collapses to one space (aggressive)");
 
     ok_invariant(STRIP_XML, "<a><![CDATA[unterminated", 24,
                  "xml: unterminated CDATA stays in bounds");
@@ -824,19 +917,21 @@ test_boundary_cases(void)
 }
 
 
-/* ---- flags plumbing: no behaviour change yet ----------------------------
+/* ---- flags gate: conservative vs aggressive now DIFFER -------------------
  *
- * strip_minify() grew a `flags` parameter (STRIP_F_AGGRESSIVE) so a later PR
- * can gate lossy transforms behind it. THIS PR is pure plumbing: no
- * strip_css/strip_js/strip_html/strip_svg branches on flags yet. The honest
- * assertion here is that flags=0 and flags=STRIP_F_AGGRESSIVE currently
- * produce IDENTICAL output for a representative input of each kind — this is
- * the red-first canary the follow-up PR flips once it actually gates a
- * transform (e.g. once aggressive CSS zero-unit stripping is gated, this test
- * must be updated, not silently left green by accident).
+ * strip_minify() grew a `flags` parameter (STRIP_F_AGGRESSIVE) in the plumbing
+ * PR; THIS PR is the one that gates the four confirmed-lossy transforms behind
+ * it (AUD-01 CSS zero-unit, AUD-02 JS identical-operator fusion, AUD-03 SVG/XML
+ * text-node whitespace, AUD-04 HTML text-node whitespace). The identity
+ * assertion the plumbing PR seeded was the deliberate canary for this change:
+ * it must now read FALSE for every kind whose representative input actually
+ * exercises a gated transform, and stays TRUE only where it doesn't (SVG's
+ * sample here is pure inter-tag whitespace, which was never gated; JSON has no
+ * aggressive path at all).
  *
- * CONTROL: none — there is no gate to break yet. This group exists to be
- * revisited, not to catch a regression today.
+ * CONTROL: gate any of the four transforms on `1` instead of
+ * `flags & STRIP_F_AGGRESSIVE` (i.e. always run it) and its "differs" case
+ * below reds — output goes back to being identical for flags=0 and AGGRESSIVE.
  */
 
 static void
@@ -866,24 +961,62 @@ is_flags_identical(strip_kind_t kind, const char *in, const char *name)
     tap(n1 == n2 && memcmp(out_conservative, out_aggressive, n1) == 0, name);
 }
 
+/* Assert flags=0 vs STRIP_F_AGGRESSIVE produce DIFFERENT output — the inverse
+ * of is_flags_identical(), used where the input exercises a gated transform. */
 static void
-test_flags_no_behaviour_change(void)
+is_flags_differ(strip_kind_t kind, const char *in, const char *name)
 {
-    is_flags_identical(STRIP_CSS, "a{color:#aabbcc;margin:0px}",
-                       "flags: CSS output identical for flags=0 vs AGGRESSIVE");
-    is_flags_identical(STRIP_JS, "function f(){ return  1 ; }",
-                       "flags: JS output identical for flags=0 vs AGGRESSIVE");
-    is_flags_identical(STRIP_HTML, "<p>  hello   <b>world</b>  </p>",
-                       "flags: HTML output identical for flags=0 vs AGGRESSIVE");
-    is_flags_identical(STRIP_SVG, "<svg>  <rect/>   </svg>",
-                       "flags: SVG output identical for flags=0 vs AGGRESSIVE");
+    unsigned char out_conservative[8192];
+    unsigned char out_aggressive[8192];
+    size_t in_len = strlen(in);
+    size_t n1, n2;
 
-    /* API accepts both flag values on every kind, including JSON (which has
-     * no aggressive path at all — flags is simply ignored there). */
+    memset(out_conservative, 0, sizeof(out_conservative));
+    memset(out_aggressive, 0, sizeof(out_aggressive));
+
+    n1 = strip_minify(kind, (const unsigned char *) in, in_len,
+                       out_conservative, 0);
+    n2 = strip_minify(kind, (const unsigned char *) in, in_len,
+                       out_aggressive, STRIP_F_AGGRESSIVE);
+
+    if (n1 > in_len || n2 > in_len) {
+        printf("not ok %d - %s\n", ++plan_n, name);
+        printf("#   OUTPUT LONGER THAN INPUT: conservative=%zu aggressive=%zu"
+               " input=%zu (buffer overflow)\n", n1, n2, in_len);
+        plan_failed++;
+        return;
+    }
+
+    tap(!(n1 == n2 && memcmp(out_conservative, out_aggressive, n1) == 0), name);
+}
+
+static void
+test_flags_gate_behaviour(void)
+{
+    /* Gated transforms: representative input for each of AUD-01..04 must now
+     * differ between conservative and aggressive mode. */
+    is_flags_differ(STRIP_CSS, "a{color:#aabbcc;margin:0px}",
+                    "flags: CSS output DIFFERS for flags=0 vs AGGRESSIVE (AUD-01)");
+    is_flags_differ(STRIP_JS, "a + +b;",
+                    "flags: JS output DIFFERS for flags=0 vs AGGRESSIVE (AUD-02)");
+    is_flags_differ(STRIP_HTML, "<p>  hello   <b>world</b>  </p>",
+                    "flags: HTML output DIFFERS for flags=0 vs AGGRESSIVE (AUD-04)");
+    is_flags_differ(STRIP_SVG, "<text>a   b</text>",
+                    "flags: SVG output DIFFERS for flags=0 vs AGGRESSIVE (AUD-03)");
+    is_flags_differ(STRIP_XML, "<a>x   <b/></a>",
+                    "flags: XML output DIFFERS for flags=0 vs AGGRESSIVE (AUD-03)");
+
+    /* Inputs that do NOT touch any gated transform still produce identical
+     * output — the gate must not leak into unrelated code paths. SVG's
+     * sample here is pure inter-tag whitespace ('>' … '<'), which was never
+     * gated (only text-node whitespace is). JSON has no aggressive path at
+     * all; flags is simply ignored there. */
+    is_flags_identical(STRIP_SVG, "<svg>  <rect/>   </svg>",
+                       "flags: SVG inter-tag whitespace identical for flags=0 vs AGGRESSIVE");
     is_flags_identical(STRIP_JSON, "{\"a\": 1}",
                        "flags: JSON output identical for flags=0 vs AGGRESSIVE");
-    is_flags_identical(STRIP_XML, "<a>  <b/>  </a>",
-                       "flags: XML output identical for flags=0 vs AGGRESSIVE");
+    is_flags_identical(STRIP_CSS, "a{color:red;background:blue}",
+                       "flags: CSS output identical for flags=0 vs AGGRESSIVE when no zero-unit present");
 }
 
 
@@ -903,7 +1036,7 @@ main(void)
     test_svg_xml();
     test_boundary_cases();
     test_dispatch();
-    test_flags_no_behaviour_change();
+    test_flags_gate_behaviour();
 
     printf("1..%d\n", plan_n);
     return plan_failed ? 1 : 0;

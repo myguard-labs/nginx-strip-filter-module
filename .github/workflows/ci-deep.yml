@@ -1,4 +1,4 @@
-# sync-sha: 7f5a61019d343e968f627a5801d824bb2f32825d2a558df7ed6f4b15cbb1d7e0
+# sync-sha: dabd380d3c2835c7effdd15c6342f69919e4a3c84c9e791ed713515caadbc824
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -167,7 +167,11 @@ jobs:
         run: |
           set -euo pipefail
           bash ci/tools/ci-build.sh "$MATRIX_FLAVOR" "$MATRIX_VERSION"
-          build=".build/$MATRIX_FLAVOR-${MATRIX_VERSION}-debug/objs"
+          # ci-build.sh suffixes the tree ONLY for MODE=coverage; debug (the
+          # default mode used here) builds into the UNsuffixed name. A "-debug"
+          # suffix points at a directory that never exists, so the two test -f/-x
+          # asserts below failed on every flavor while the build itself succeeded.
+          build=".build/$MATRIX_FLAVOR-${MATRIX_VERSION}/objs"
           case "$MATRIX_FLAVOR" in
               angie) server="$build/angie" ;;
               *)     server="$build/nginx" ;;
@@ -289,6 +293,13 @@ jobs:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
+      # Without this, env.NGINX_VERSION is EMPTY in every later step: the paths
+      # below resolve to .build/nginx-/objs/nginx, Test::Nginx finds no server
+      # and Bailouts, and the soak reports FAIL having analysed nothing.
+      # ci-build.sh's own literal fallback masked it -- the build succeeded.
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -299,14 +310,14 @@ jobs:
 
       # Keyed on version+sha256, not version alone: re-pinning the sha at an
       # unchanged version string must invalidate this cache, not keep
-      # serving the old bytes forever. NGINX_VERSION is unresolved in this
-      # job (pre-existing -- see the header note); the sha is pinned to match
-      # the literal fallback ci-build.sh applies for the same reason.
+      # serving the old bytes forever. Both the version and the sha now come
+      # from versions.env via "Load version pins" above; the sha was previously
+      # a hardcoded literal because NGINX_VERSION was unresolved in this job.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}-9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
 
       # Hybrid: self-hosted disk persists naturally; actions/cache backs the
       # fork path. No restore-keys prefix (never partial-match a build tree).
@@ -394,6 +405,13 @@ jobs:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
+      # Without this, env.NGINX_VERSION is EMPTY in every later step: the paths
+      # below resolve to .build/nginx-/objs/nginx, Test::Nginx finds no server
+      # and Bailouts, and the soak reports FAIL having analysed nothing.
+      # ci-build.sh's own literal fallback masked it -- the build succeeded.
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -404,14 +422,14 @@ jobs:
 
       # Keyed on version+sha256, not version alone: re-pinning the sha at an
       # unchanged version string must invalidate this cache, not keep
-      # serving the old bytes forever. NGINX_VERSION is unresolved in this
-      # job (pre-existing -- see the header note); the sha is pinned to match
-      # the literal fallback ci-build.sh applies for the same reason.
+      # serving the old bytes forever. Both the version and the sha now come
+      # from versions.env via "Load version pins" above; the sha was previously
+      # a hardcoded literal because NGINX_VERSION was unresolved in this job.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}-9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
 
       # Hybrid: self-hosted disk persists naturally; actions/cache backs the
       # fork path. No restore-keys prefix (never partial-match a build tree).

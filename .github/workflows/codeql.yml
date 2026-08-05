@@ -1,4 +1,4 @@
-# sync-sha: df76e68291db05bbe90bde01104d8dfedd4f87b4ea15c22996c06332d477fe4d
+# sync-sha: b1b0117ed66b902854cd7b6e82ed597d526e6340f38a81eec05edf4dd9408a38
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -108,26 +108,29 @@ jobs:
             exit 1
           fi
           echo "CodeQL database dir: $DB_DIR"
+          echo "DB dir listing (top level):"
+          find "$DB_DIR" -maxdepth 1 -mindepth 1
 
-          # The `codeql database info`/`resolve` subcommand surface is not
-          # stable across CLI versions on this runner (verified in CI: the
-          # bundled 2.26.2 CLI rejects `database info` outright). What the
-          # C/C++ extractor genuinely, unambiguously emits is one .trap /
-          # .trap.gz file per traced translation unit in the database's trap
-          # dir -- that's what "traced translation units" concretely means
-          # for a compiled-language database, so count those directly instead
-          # of depending on CLI subcommand output shape.
-          TRAP_DIR="$DB_DIR/trap/cpp"
-          echo "Trap dir: $TRAP_DIR"
-          if [ ! -d "$TRAP_DIR" ]; then
-            echo "ERROR: trap dir does not exist ('$TRAP_DIR'). Treating as zero translation units."
+          # By the time `analyze` has finalized the database, raw trap files
+          # under trap/cpp are gone (finalize consolidates/cleans them up).
+          # What survives and is documented, stable database structure is
+          # src/ -- the source archive, containing one copy of every file
+          # that was actually extracted into the database. Its content is
+          # the ground truth for "how many translation units did this
+          # database really see" for a compiled-language DB.
+          SRC_DIR="$DB_DIR/src"
+          echo "Source archive dir: $SRC_DIR"
+          if [ ! -d "$SRC_DIR" ]; then
+            echo "ERROR: source archive dir does not exist ('$SRC_DIR')."
             exit 1
           fi
 
-          echo "trap dir listing (top level):"
-          find "$TRAP_DIR" -maxdepth 1 -mindepth 1 | head -20
+          echo "source archive listing (find, first 20):"
+          find "$SRC_DIR" -type f | head -20
 
-          TU_COUNT=$(find "$TRAP_DIR" -type f \( -name '*.trap' -o -name '*.trap.gz' \) | wc -l)
+          # Count only compiled source files (translation units proper), not
+          # headers -- headers get archived too but are not themselves TUs.
+          TU_COUNT=$(find "$SRC_DIR" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \) | wc -l)
 
           echo "CodeQL traced translation units: $TU_COUNT"
 

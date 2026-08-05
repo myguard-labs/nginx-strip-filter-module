@@ -68,7 +68,7 @@ is_min(strip_kind_t kind, const char *in, const char *want, const char *name)
     size_t n;
 
     memset(out, 0, sizeof(out));
-    n = strip_minify(kind, (const unsigned char *) in, in_len, out);
+    n = strip_minify(kind, (const unsigned char *) in, in_len, out, 0);
 
     if (n > in_len) {
         printf("not ok %d - %s\n", ++plan_n, name);
@@ -94,7 +94,7 @@ static void
 ok_invariant(strip_kind_t kind, const char *in, size_t in_len, const char *name)
 {
     unsigned char out[8192];
-    size_t n = strip_minify(kind, (const unsigned char *) in, in_len, out);
+    size_t n = strip_minify(kind, (const unsigned char *) in, in_len, out, 0);
 
     if (n > in_len) {
         printf("#   OUTPUT LONGER THAN INPUT: %zu > %zu\n", n, in_len);
@@ -736,17 +736,17 @@ test_dispatch(void)
     unsigned char out[16];
 
     /* Zero-length input on every kind: must write nothing and not touch dst. */
-    tap(strip_minify(STRIP_HTML, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_HTML, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: HTML writes nothing");
-    tap(strip_minify(STRIP_CSS, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_CSS, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: CSS writes nothing");
-    tap(strip_minify(STRIP_JS, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_JS, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: JS writes nothing");
-    tap(strip_minify(STRIP_JSON, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_JSON, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: JSON writes nothing");
-    tap(strip_minify(STRIP_SVG, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_SVG, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: SVG writes nothing");
-    tap(strip_minify(STRIP_XML, (const unsigned char *) "", 0, out) == 0,
+    tap(strip_minify(STRIP_XML, (const unsigned char *) "", 0, out, 0) == 0,
         "empty input: XML writes nothing");
 
     /* Input that is entirely whitespace collapses to at most one byte, and for
@@ -824,6 +824,69 @@ test_boundary_cases(void)
 }
 
 
+/* ---- flags plumbing: no behaviour change yet ----------------------------
+ *
+ * strip_minify() grew a `flags` parameter (STRIP_F_AGGRESSIVE) so a later PR
+ * can gate lossy transforms behind it. THIS PR is pure plumbing: no
+ * strip_css/strip_js/strip_html/strip_svg branches on flags yet. The honest
+ * assertion here is that flags=0 and flags=STRIP_F_AGGRESSIVE currently
+ * produce IDENTICAL output for a representative input of each kind — this is
+ * the red-first canary the follow-up PR flips once it actually gates a
+ * transform (e.g. once aggressive CSS zero-unit stripping is gated, this test
+ * must be updated, not silently left green by accident).
+ *
+ * CONTROL: none — there is no gate to break yet. This group exists to be
+ * revisited, not to catch a regression today.
+ */
+
+static void
+is_flags_identical(strip_kind_t kind, const char *in, const char *name)
+{
+    unsigned char out_conservative[8192];
+    unsigned char out_aggressive[8192];
+    size_t in_len = strlen(in);
+    size_t n1, n2;
+
+    memset(out_conservative, 0, sizeof(out_conservative));
+    memset(out_aggressive, 0, sizeof(out_aggressive));
+
+    n1 = strip_minify(kind, (const unsigned char *) in, in_len,
+                       out_conservative, 0);
+    n2 = strip_minify(kind, (const unsigned char *) in, in_len,
+                       out_aggressive, STRIP_F_AGGRESSIVE);
+
+    if (n1 > in_len || n2 > in_len) {
+        printf("not ok %d - %s\n", ++plan_n, name);
+        printf("#   OUTPUT LONGER THAN INPUT: conservative=%zu aggressive=%zu"
+               " input=%zu (buffer overflow)\n", n1, n2, in_len);
+        plan_failed++;
+        return;
+    }
+
+    tap(n1 == n2 && memcmp(out_conservative, out_aggressive, n1) == 0, name);
+}
+
+static void
+test_flags_no_behaviour_change(void)
+{
+    is_flags_identical(STRIP_CSS, "a{color:#aabbcc;margin:0px}",
+                       "flags: CSS output identical for flags=0 vs AGGRESSIVE");
+    is_flags_identical(STRIP_JS, "function f(){ return  1 ; }",
+                       "flags: JS output identical for flags=0 vs AGGRESSIVE");
+    is_flags_identical(STRIP_HTML, "<p>  hello   <b>world</b>  </p>",
+                       "flags: HTML output identical for flags=0 vs AGGRESSIVE");
+    is_flags_identical(STRIP_SVG, "<svg>  <rect/>   </svg>",
+                       "flags: SVG output identical for flags=0 vs AGGRESSIVE");
+
+    /* API accepts both flag values on every kind, including JSON (which has
+     * no aggressive path at all — flags is simply ignored there). */
+    is_flags_identical(STRIP_JSON, "{\"a\": 1}",
+                       "flags: JSON output identical for flags=0 vs AGGRESSIVE");
+    is_flags_identical(STRIP_XML, "<a>  <b/>  </a>",
+                       "flags: XML output identical for flags=0 vs AGGRESSIVE");
+}
+
+
 int
 main(void)
 {
@@ -840,6 +903,7 @@ main(void)
     test_svg_xml();
     test_boundary_cases();
     test_dispatch();
+    test_flags_no_behaviour_change();
 
     printf("1..%d\n", plan_n);
     return plan_failed ? 1 : 0;

@@ -189,11 +189,16 @@ css_try_short_hex(const unsigned char *src, size_t len, size_t i,
 }
 
 static size_t
-strip_css(const unsigned char *src, size_t len, unsigned char *dst)
+strip_css(const unsigned char *src, size_t len, unsigned char *dst,
+          unsigned flags)
 {
     size_t i;
     size_t o = 0;
     int pending_space = 0; /* a collapsed whitespace run is buffered */
+
+    /* Pure plumbing PR: flags is threaded through but not yet branched on.
+     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
+    (void) flags;
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
@@ -482,12 +487,17 @@ js_regex_allowed(const unsigned char *dst, size_t o)
 }
 
 static size_t
-strip_js(const unsigned char *src, size_t len, unsigned char *dst)
+strip_js(const unsigned char *src, size_t len, unsigned char *dst,
+         unsigned flags)
 {
     size_t i;
     size_t o = 0;
     int pending_nl = 0;    /* a collapsed run contained a newline */
     int pending_sp = 0;    /* a collapsed run contained spaces only */
+
+    /* Pure plumbing PR: flags is threaded through but not yet branched on.
+     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
+    (void) flags;
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
@@ -829,11 +839,16 @@ html_copy_raw(const unsigned char *src, size_t len, size_t i,
 }
 
 static size_t
-strip_html(const unsigned char *src, size_t len, unsigned char *dst)
+strip_html(const unsigned char *src, size_t len, unsigned char *dst,
+           unsigned flags)
 {
     size_t i;
     size_t o = 0;
     int pending_space = 0;
+
+    /* Pure plumbing PR: flags is threaded through but not yet branched on.
+     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
+    (void) flags;
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
@@ -931,11 +946,16 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst)
  * the filter layer) and with CDATA passthrough.
  */
 static size_t
-strip_svg(const unsigned char *src, size_t len, unsigned char *dst)
+strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
+          unsigned flags)
 {
     size_t i;
     size_t o = 0;
     int pending_space = 0;
+
+    /* Pure plumbing PR: flags is threaded through but not yet branched on.
+     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
+    (void) flags;
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
@@ -1016,29 +1036,30 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst)
 
 size_t
 strip_minify(strip_kind_t kind, const unsigned char *src, size_t len,
-             unsigned char *dst)
+             unsigned char *dst, unsigned flags)
 {
     size_t n;
     int src_had_nl = (len > 0 && src[len - 1] == '\n');
 
     switch (kind) {
     case STRIP_JSON:
+        /* JSON has no lossy transforms to gate; flags does not apply. */
         return strip_json(src, len, dst);
     case STRIP_CSS:
-        n = strip_css(src, len, dst);
+        n = strip_css(src, len, dst, flags);
         break;
     case STRIP_JS:
-        n = strip_js(src, len, dst);
+        n = strip_js(src, len, dst, flags);
         break;
     case STRIP_SVG:
     case STRIP_XML:
         /* SVG and generic XML (RSS/Atom/sitemap) share one minifier: strip
          * comments, pass CDATA verbatim, collapse inter-tag whitespace. */
-        n = strip_svg(src, len, dst);
+        n = strip_svg(src, len, dst, flags);
         break;
     case STRIP_HTML:
     default:
-        n = strip_html(src, len, dst);
+        n = strip_html(src, len, dst, flags);
         break;
     }
 

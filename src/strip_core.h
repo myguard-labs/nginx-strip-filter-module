@@ -26,17 +26,32 @@ typedef enum {
 } strip_kind_t;
 
 /*
+ * flags bit: enable additional transforms that are NOT guaranteed to
+ * preserve meaning on all valid input (lossy/aggressive minification).
+ * Unset (0) is the default and is conservative: it strips only where doing
+ * so cannot change rendered/parsed meaning. Callers that want the extra
+ * transforms must opt in explicitly by passing STRIP_F_AGGRESSIVE.
+ */
+#define STRIP_F_AGGRESSIVE 0x1u
+
+/*
  * In-place-style minifier: reads [src, len), writes to dst (which must have
  * capacity >= len), returns number of bytes written. dst and src must not
- * overlap. Output is never larger than input.
+ * overlap. Output is never larger than input, in both modes: gating an
+ * aggressive transform behind STRIP_F_AGGRESSIVE only ever emits MORE bytes
+ * than the aggressive path would, and the conservative path never emits more
+ * than input.
  *
- * The transform is "smart": it collapses runs of \r\n\t and spaces and strips
- * comments only where doing so cannot change rendered/parsed meaning. Regions
- * that must survive verbatim (HTML <pre>/<textarea>/<script>/<style> bodies,
- * JS/CSS/JSON string + template + regex literals) are copied through untouched.
+ * By default (flags == 0) the transform is conservative: it collapses runs of
+ * \r\n\t and spaces and strips comments only where doing so cannot change
+ * rendered/parsed meaning. Regions that must survive verbatim (HTML
+ * <pre>/<textarea>/<script>/<style> bodies, JS/CSS/JSON string + template +
+ * regex literals) are copied through untouched. Passing STRIP_F_AGGRESSIVE
+ * enables additional transforms that are NOT guaranteed to preserve meaning
+ * on all valid input.
  */
 size_t strip_minify(strip_kind_t kind,
                     const unsigned char *src, size_t len,
-                    unsigned char *dst);
+                    unsigned char *dst, unsigned flags);
 
 #endif /* STRIP_CORE_H */

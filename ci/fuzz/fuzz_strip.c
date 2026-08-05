@@ -31,11 +31,20 @@ static size_t         g_out_cap = 0;
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-    size_t out;
+    size_t   out;
+    unsigned flags;
 
     if (size == 0) {
         return 0;
     }
+
+    /* Derive the flags byte from the last input byte rather than adding a
+     * second fuzz target or splitting the corpus: this exercises both the
+     * conservative and (future) aggressive code paths from the SAME corpus,
+     * at zero extra build/CI cost, and libFuzzer's mutator will happily flip
+     * that one byte on its own. The remaining size-1 bytes are minified. */
+    flags = (data[size - 1] & 1) ? STRIP_F_AGGRESSIVE : 0;
+    size--;
 
     /* grow output buffer lazily */
     if (size > g_out_cap) {
@@ -47,7 +56,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         g_out_cap = size;
     }
 
-    out = strip_minify((strip_kind_t) FUZZ_KIND, data, size, g_out);
+    out = strip_minify((strip_kind_t) FUZZ_KIND, data, size, g_out, flags);
 
     /* core invariant: output never exceeds input. A violation means a write
      * past g_out happened (heap overflow) — fail loudly so the fuzzer keeps

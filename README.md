@@ -49,6 +49,7 @@ All directives are valid in `http`, `server` and `location` blocks.
 | `strip_json` | `off` | Enable JSON minification |
 | `strip_svg` | `off` | Enable SVG (`image/svg+xml`) minification |
 | `strip_xml` | `off` | Enable XML minification (`text/xml`, `application/xml`, any `+xml` subtype — RSS/Atom/sitemap) |
+| `strip_aggressive` | `off` | Enable additional lossy transforms not guaranteed to preserve meaning on all valid input. Off = conservative (the module's default behavior). |
 | `strip_min_size` | `0` | Skip bodies smaller than this (bytes) |
 | `strip_max_size` | `10m` | Skip bodies larger than this (buffered whole) |
 | `strip_types` | `text/html` | Extra MIME types treated as HTML |

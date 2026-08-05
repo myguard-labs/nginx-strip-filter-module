@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### `strip_aggressive` directive: opt-in for lossy minification (2026-08)
+
+Added the `strip_aggressive on|off;` directive (default `off`). This PR is
+pure plumbing: a `flags` parameter (`STRIP_F_AGGRESSIVE`) now threads from
+`strip_minify()` down into `strip_css`/`strip_js`/`strip_html`/`strip_svg`,
+and the directive maps to it, but no transform branches on it yet — output is
+unchanged in both modes. A follow-up gates the module's lossy transforms
+behind this flag; until then the module remains fully conservative regardless
+of the directive's value. See README `## Directives` for the default and
+`strip_core.h` for the flag's documented contract (`output <= input` holds in
+both modes).
+
 ### CI standardisation / skeleton-layout adoption (2026-08)
 
 Adopted the `nginx-skeleton-module` reference CI layout: sources moved to

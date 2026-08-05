@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Documented limitation: whole-body buffering, flush not honoured (2026-08)
+
+Recorded as a known and intentional constraint rather than changed: the filter
+buffers the whole response body before minifying, and ignores `flush`/`sync`
+buffers that carry no terminal flag. Streamed and SSE-style responses are held
+until complete. The minifier carries no lexer state across calls, so emitting
+early would corrupt comments or strings spanning the buffer seam. Buffering is
+bounded only in size: once the accumulated body exceeds `strip_max_size` bytes
+the filter passes the remainder through. That is a byte threshold, not a
+streaming switch, so a stream that stays under the limit is still held until it
+completes; use `strip off;` on those locations. A resumable minifier that could
+honour flush is tracked as future work.
+
 ### BEHAVIOUR CHANGE: default output is now conservative (2026-08)
 
 Gated four transforms — proven able to corrupt valid input under some inputs

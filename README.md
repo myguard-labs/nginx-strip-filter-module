@@ -235,8 +235,22 @@ load_module modules/ngx_http_strip_filter_module.so;
 
 ## Caveats
 
-- Bodies are buffered whole before minification. Set `strip_max_size` to skip
-  very large responses (streaming, video manifests, etc.).
+- **Whole-body buffering is intentional, and `flush`/`sync` buffers are not
+  honoured.** The filter accumulates the entire response body before minifying
+  it, so a streamed or SSE-style response is held until it is complete rather
+  than being forwarded incrementally. An upstream buffer carrying `flush` or
+  `sync` without a terminal flag does *not* cause an early emit. This is a
+  deliberate architectural constraint, not an oversight: the minifier keeps no
+  lexer state between calls, so emitting a partial body would split it into
+  independent minification passes and corrupt any comment or string that spans
+  the seam, a correctness bug in exchange for latency. Buffering is bounded only
+  in size, by `strip_max_size`: once the accumulated body exceeds that many bytes
+  the filter stops buffering and passes the remainder through. That is a byte
+  threshold, not a streaming switch, and the filter never identifies a response
+  as streaming. An event stream or long-polling endpoint that stays under the
+  limit is held until it completes, however long that takes, so set `strip off;`
+  on those locations rather than relying on the size cap. Making the minifier
+  resumable so flush can be honoured is tracked as future work.
 - Inline `<script>`/`<style>` bodies in HTML are preserved verbatim; they are
   not recursively minified. Enable `strip_js`/`strip_css` to minify standalone
   `.js`/`.css` files separately.

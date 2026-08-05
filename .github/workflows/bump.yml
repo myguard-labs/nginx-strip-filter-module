@@ -1,0 +1,112 @@
+# sync-sha: bbcfccb7710a82c6069fba1d2941c5e308c603519e205a3f2817d01c16909af1
+name: Bump versions
+
+# Weekly: check nginx.org for a newer mainline release than what's pinned,
+# move every GitHub Action sha pin to its newest release, and open a PR.
+# ci/tools/bump-versions.sh does the actual work (also runnable locally with
+# --dry-run to preview).
+#
+# Opens a PR rather than pushing straight to master -- master carries a
+# required-pull-request ruleset with no bypass actor, so a direct push is
+# always rejected (GH013). The bot pushes a branch and opens a PR via
+# BUMP_PR_TOKEN (a classic PAT -- the default GITHUB_TOKEN cannot create
+# PRs on myguard-labs repos). Normal review/required-checks gate the merge.
+#
+# BUMP_PR_TOKEN authenticates BOTH halves: gh (via GH_TOKEN) for the PR, and
+# git (via GIT_ASKPASS) for the branch push.
+#
+# Action pins (keep in sync with build-test.yml):
+# actions/checkout@v5 -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+#
+# NOT a PR-lane member: schedule + workflow_dispatch only, never called from
+# ci.yml. It runs unattended against master (not a PR head), needs write
+# credentials no PR run should carry, and touches nothing ci.yml's callers
+# depend on -- adding it to the orchestrator would gate every PR on a job
+# that has no PR-shaped input to check.
+
+on:
+  schedule:
+    # Weekly, Monday 04:00 UTC.
+    - cron: "0 4 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: bump-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Bump nginx/action pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run bump script
+        id: bump
+        env:
+          # Every action-pin lookup hits api.github.com; unauthenticated, the
+          # shared runner IP is rate-limited to 403s. bump-actions.sh treats a
+          # failed lookup as fatal rather than "nothing to bump", so a
+          # missing/expired token fails this step instead of quietly leaving
+          # the pins to rot.
+          GH_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
+        run: bash ci/tools/bump-versions.sh
+
+      - name: Open PR if anything changed
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
+          BUMP_PR_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "nothing changed, skipping PR"
+            exit 0
+          fi
+          branch="bump/versions-$(date -u +%Y%m%d)"
+          git config user.name "myguard-bump-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add -A
+          git commit -m "chore: bump nginx/action pins
+
+          Automated weekly version check (ci/tools/bump-versions.sh)."
+          # persist-credentials is false, so the checkout leaves no git
+          # credential behind and a plain `git push` prompts for a username.
+          # GH_TOKEN authenticates gh but not git, so hand git its own
+          # credential via the askpass helper -- keeps the token out of argv
+          # and out of .git/config, unlike an inline x-access-token@ URL.
+          git config credential.helper ''
+          askpass="$(mktemp)"
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            Username*) echo x-access-token ;;
+            *) printf '%s' "$BUMP_PR_TOKEN" ;;
+          esac
+          ASKPASS
+          chmod 700 "$askpass"
+          # Force-push: the branch name is date-based, so a same-day re-run
+          # (a manual dispatch, or a retry after a failure) collides with the
+          # branch the earlier run created and is otherwise rejected
+          # non-fast-forward. The branch is bot-owned and disposable.
+          GIT_ASKPASS="$askpass" git push --force-with-lease origin "$branch"
+          rm -f "$askpass"
+          # An open PR for this branch may already exist from that earlier
+          # run; the push above has refreshed it, so there is nothing to do.
+          if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[0].number')" ]; then
+            echo "PR for $branch already open, refreshed by the push"
+            exit 0
+          fi
+          gh pr create \
+            --title "chore: bump nginx/action pins ($(date -u +%Y-%m-%d))" \
+            --body "Automated weekly version check (ci/tools/bump-versions.sh). Review the diff and let required CI checks gate the merge." \
+            --base master \
+            --head "$branch"

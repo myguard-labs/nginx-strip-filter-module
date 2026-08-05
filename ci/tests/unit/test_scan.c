@@ -217,6 +217,21 @@ test_css_hex(void)
     /* Truncated at end of input. */
     ok_invariant(STRIP_CSS, "a{color:#aab", 12,
                  "css: truncated hex stays in bounds");
+
+    /* All six digits present but nothing follows them at all — the "end of
+     * input" arm of the boundary check (`after == 0`), distinct from the
+     * truncated-mid-hex case above. A 6-digit run ending exactly at EOF is
+     * still a complete, shortenable color: the boundary rule exists to reject
+     * a 7th hex digit, not to require a byte after the color at all.
+     *
+     * CONTROL: in css_try_short_hex(), the length guard
+     *     if (i + 6 > len) { return i; }  ->  if (i + 6 >= len) { return i; }
+     * then rejects this exact-EOF case (it now requires a byte past the 6th
+     * digit), and "css: hex shortened when input ends exactly at 6 digits"
+     * reds — output stays the full `#aabbcc` (15 bytes) instead of the
+     * shortened `#abc` (12 bytes). */
+    is_min(STRIP_CSS, "a{color:#aabbcc", "a{color:#abc",
+           "css: hex shortened when input ends exactly at 6 digits");
 }
 
 
@@ -248,6 +263,19 @@ test_css_numbers(void)
      * prefix and not a unit at all (`0inch` is not `0` + `in`). */
     is_min(STRIP_CSS, "a{margin:0inch}", "a{margin:0inch}",
            "css: 0inch is not 0in + boundary");
+
+    /* A unit ending exactly at end-of-input is also a boundary — end of input
+     * is as much a token boundary as `;` or `}`, so a truncated declaration
+     * `margin:0px` with nothing after it still strips the unit.
+     *
+     * CONTROL: in css_skip_zero_unit(), drop the end-of-input arm
+     *     if (after == 0 || sc_is_space(after) || ...)  ->  if (sc_is_space(after) || ...)
+     * `a{margin:0px` (no closing brace, truncated) then keeps its unit and
+     * "css: unit stripped when input ends exactly at the unit" reds — output
+     * stays `a{margin:0px` (13 bytes) instead of the stripped `a{margin:0`
+     * (10 bytes). */
+    is_min(STRIP_CSS, "a{margin:0px", "a{margin:0",
+           "css: unit stripped when input ends exactly at the unit");
 
     /* CSS Values 3 § 5: a <number> may omit the integer part when it is zero. */
     is_min(STRIP_CSS, "a{opacity:0.5}", "a{opacity:.5}", "css: 0.5 -> .5");

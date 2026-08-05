@@ -1,4 +1,4 @@
-# sync-sha: 0f3bf5a326b309d15e056e1d3e94fcb2e8fd75485d0def8ceaf27849520cd05d
+# sync-sha: 49ac01e98263316a81a26a68024151e979973d3a056dbf7f1e6474ee8491671b
 name: A/UBSan
 
 # Dedicated ASan+UBSan run on every PR/push -- the Test::Nginx ci/t/ suite run
@@ -19,10 +19,12 @@ name: A/UBSan
 #
 # Action pins (keep in sync with build-test.yml / valgrind.yml headers):
 # actions/checkout@v5 -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+# actions/cache@v4    -> 0057852bfaa89a56745cba8c7296529d2fc39830
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NGINX_VERSION: "1.31.1"
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
@@ -58,11 +60,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev zlib1g-dev cpanminus \
-            libio-socket-ssl-perl
+            libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (asan)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-asan-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build with sanitizers
         run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" asan
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       # Runs BEFORE the first step that binds the band -- `prove` below. Fails
       # if the band reaches the kernel ephemeral range or is already occupied

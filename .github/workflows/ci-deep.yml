@@ -1,4 +1,4 @@
-# sync-sha: f4f58cad265b08df2ab192125349a3ff850d3b123e850e790a0dc91fb26eef43
+# sync-sha: 9488db59ff0d15d84b163dd5c0c6a443d7faef8a32c6d4882cf57623bbe56fc4
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -31,6 +31,7 @@ name: CI Deep
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
   schedule:
@@ -67,12 +68,15 @@ jobs:
         include:
           - flavor: nginx
             version_key: NGINX_MAINLINE
+            sha_key: NGINX_MAINLINE_SHA256
             label: mainline
           - flavor: nginx
             version_key: NGINX_STABLE
+            sha_key: NGINX_STABLE_SHA256
             label: stable
           - flavor: angie
             version_key: ANGIE_VERSION
+            sha_key: ANGIE_SHA256
             label: angie
     steps:
       - name: Checkout module
@@ -88,7 +92,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev zlib1g-dev \
-            cpanminus libio-socket-ssl-perl
+            cpanminus libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
 
       - name: Resolve matrix version
@@ -101,6 +105,7 @@ jobs:
           # matrix values are repo-controlled today, but the safe shape costs
           # nothing and stops the pattern from being copied somewhere it is not.
           MATRIX_VERSION_KEY: ${{ matrix.version_key }}
+          MATRIX_SHA_KEY: ${{ matrix.sha_key }}
         run: |
           key="$MATRIX_VERSION_KEY"
           value="${!key:-}"
@@ -111,11 +116,31 @@ jobs:
           echo "MATRIX_VERSION=$value" >> "$GITHUB_ENV"
           echo "resolved $key=$value"
 
+          shakey="$MATRIX_SHA_KEY"
+          shaval="${!shakey:-}"
+          if [ -z "$shaval" ]; then
+            echo "::error::$shakey is not set in .github/versions.env"
+            exit 1
+          fi
+          echo "MATRIX_SHA256=$shaval" >> "$GITHUB_ENV"
+          echo "resolved $shakey=$shaval"
+
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string must invalidate this cache, not keep
+      # serving the old bytes forever.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/${{ matrix.flavor }}-${{ env.MATRIX_VERSION }}.tar.gz
-          key: src-${{ matrix.flavor }}-${{ env.MATRIX_VERSION }}
+          key: src-${{ matrix.flavor }}-${{ env.MATRIX_VERSION }}-${{ env.MATRIX_SHA256 }}
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (${{ matrix.flavor }} ${{ matrix.label }})
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.flavor }}-${{ matrix.label }}-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build server and dynamic module
         # angie names its binary objs/angie, nginx names it objs/nginx. Assert
@@ -136,6 +161,10 @@ jobs:
           test -x "$server"
           echo "SERVER_BIN=$GITHUB_WORKSPACE/$server" >> "$GITHUB_ENV"
           echo "MODULE_SO=$GITHUB_WORKSPACE/$build/ngx_http_strip_filter_module.so" >> "$GITHUB_ENV"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       - name: Run ci/t/
         env:
@@ -247,17 +276,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev valgrind zlib1g-dev \
-            cpanminus libio-socket-ssl-perl
+            cpanminus libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
 
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string must invalidate this cache, not keep
+      # serving the old bytes forever. NGINX_VERSION is unresolved in this
+      # job (pre-existing -- see the header note); the sha is pinned to match
+      # the literal fallback ci-build.sh applies for the same reason.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}
+          key: src-nginx-${{ env.NGINX_VERSION }}-9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (memcheck soak)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-memcheck-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build debug server and module
         run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       # Runs BEFORE the first step that binds the band -- `prove` below. Fails
       # if the band reaches the kernel ephemeral range or is already occupied
@@ -335,17 +381,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev valgrind zlib1g-dev \
-            cpanminus libio-socket-ssl-perl
+            cpanminus libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
 
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string must invalidate this cache, not keep
+      # serving the old bytes forever. NGINX_VERSION is unresolved in this
+      # job (pre-existing -- see the header note); the sha is pinned to match
+      # the literal fallback ci-build.sh applies for the same reason.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}
+          key: src-nginx-${{ env.NGINX_VERSION }}-9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (debug, shared with memcheck soak)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-memcheck-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build debug server and module
         run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       # Runs BEFORE the first step that binds the band -- `prove` below. Fails
       # if the band reaches the kernel ephemeral range or is already occupied
@@ -408,6 +471,10 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -422,11 +489,31 @@ jobs:
             pip3 install --quiet --user --break-system-packages semgrep
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
+
+      # Keyed on version+sha256, matching every other tarball cache in this
+      # repo: a re-pinned sha at the same version string must invalidate.
+      - name: Cache source tarball
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
+
       - name: Configure nginx src tree (clang-tidy headers)
+        # Digest-verified, not a bare wget: this step used to fetch the
+        # tarball unverified (and relied on an NGINX_VERSION that this job
+        # never actually set -- see "Load version pins" above, added by the
+        # same change). fetch-verify.sh is the same helper ci-build.sh uses
+        # for every other build in this repo -- reused here rather than
+        # writing a second fetcher.
         run: |
           set -euo pipefail
-          wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
-          tar -xzf "nginx-${NGINX_VERSION}.tar.gz"; cd "nginx-${NGINX_VERSION}"
+          mkdir -p .build
+          bash .github/scripts/fetch-verify.sh \
+            "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+            "$NGINX_VERSION_SHA256" \
+            ".build/nginx-${NGINX_VERSION}.tar.gz"
+          tar -xzf ".build/nginx-${NGINX_VERSION}.tar.gz"
+          cd "nginx-${NGINX_VERSION}"
           CC=gcc ./configure --with-compat --add-dynamic-module="$GITHUB_WORKSPACE" >/dev/null
           echo "NGINX_SRC_TREE=$PWD" >> "$GITHUB_ENV"
       - name: flawfinder
@@ -498,11 +585,27 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev zlib1g-dev \
-            cpanminus libio-socket-ssl-perl gcovr
+            cpanminus libio-socket-ssl-perl gcovr ccache
           sudo cpanm --notest --quiet Test::Nginx
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      # ccache is safe here (unlike codeql): coverage.sh's own tree/object
+      # checks (see its header) already fail loudly on a stale/wrong-mode
+      # tree, and a ccache hit still runs the linker/gcov instrumentation
+      # pass since --coverage output is per-invocation, not skipped by cache.
+      - name: Cache ccache (coverage)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-coverage-${{ hashFiles('src/**', 'ci/tools/ci-build.sh', 'ci/tools/coverage.sh') }}
 
       - name: Run coverage.sh (separate gcov-instrumented tree)
         run: bash ci/tools/coverage.sh "$NGINX_VERSION"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       - name: Upload coverage report
         if: always()

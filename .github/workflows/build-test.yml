@@ -1,9 +1,11 @@
-# sync-sha: d9c0e59ca51853891f37fd9effecebc54cce207f90cd99e8a5aa62ad07ab54ea
+# sync-sha: cf483082dfc79202e367ac3849b430d1db1a69cacdadd3e388e2479cd2079e40
 name: Build and Test
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NGINX_VERSION: "1.31.1"
+  NGINX_VERSION_SHA256: "9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc"
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
@@ -85,13 +87,28 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential clang curl libpcre2-dev zlib1g-dev
+            build-essential clang curl libpcre2-dev zlib1g-dev ccache
 
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string (a corrected/compromised-upstream pin) must
+      # invalidate this cache, not keep serving the old bytes forever.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/${{ matrix.flavor }}-${{ matrix.version }}.tar.gz
-          key: src-${{ matrix.flavor }}-${{ matrix.version }}
+          key: src-${{ matrix.flavor }}-${{ matrix.version }}-${{ env.NGINX_VERSION_SHA256 }}
+
+      # Hybrid: self-hosted runner disk (~/.ccache under CCACHE_DIR) persists
+      # naturally between jobs; actions/cache is the fallback for the fork
+      # path (ubuntu-latest, ephemeral). Keyed on the compiler + module
+      # sources + configure flags via ci-build.sh's own CC_OPT string, so a
+      # flag or source change invalidates instead of serving stale objects;
+      # no restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (${{ matrix.flavor }} ${{ matrix.version }} / ${{ matrix.cc }})
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.flavor }}-${{ matrix.version }}-${{ matrix.cc }}-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build server and dynamic module
         env:
@@ -100,6 +117,10 @@ jobs:
           bash ci/tools/ci-build.sh "${{ matrix.flavor }}" "${{ matrix.version }}"
           build=".build/${{ matrix.flavor }}-${{ matrix.version }}/objs"
           test -f "$build/ngx_http_strip_filter_module.so"
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       - name: Strict module compile
         run: |

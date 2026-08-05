@@ -1,4 +1,4 @@
-# sync-sha: 392a580754a2fe0a513353d1de713e4516a8964a466cc51f593fad65a5e9958b
+# sync-sha: 888c2390a414a1e6cfd87b02e7eeb0daaf96a6d29d38755314171eec91b53e5f
 name: Valgrind
 
 # Valgrind memcheck lite soak on every PR/push — the Test::Nginx ci/t/ suite run
@@ -13,6 +13,8 @@ name: Valgrind
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NGINX_VERSION: "1.31.1"
+  NGINX_VERSION_SHA256: "9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc"
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
@@ -48,17 +50,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl libpcre2-dev valgrind zlib1g-dev \
-            cpanminus libio-socket-ssl-perl
+            cpanminus libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
 
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string must invalidate this cache, not keep
+      # serving the old bytes forever.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
+
+      # Hybrid: self-hosted disk persists naturally; actions/cache backs the
+      # fork path. No restore-keys prefix (never partial-match a build tree).
+      - name: Cache ccache (debug)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-valgrind-debug-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build debug server and module
         run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" debug
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s
 
       # Runs BEFORE the first step that binds the band -- `prove` below. Fails
       # if the band reaches the kernel ephemeral range or is already occupied

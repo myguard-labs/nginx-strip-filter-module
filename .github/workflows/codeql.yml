@@ -1,4 +1,4 @@
-# sync-sha: 81238358d93a5b4fd3974c346b50dcc82c5635bb346597ad0248dc2e7e70dca9
+# sync-sha: 10ffc0c97c300b9222cf7d7d40443b1910ecdc57db735e3b44ca004e94a98615
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -71,11 +71,14 @@ jobs:
           # Deliberately no paths/paths-ignore: they do nothing for C/C++ (see
           # the header comment). The `module` build below is what scopes this.
 
+      # Keyed on version+sha256, not version alone: re-pinning the sha at an
+      # unchanged version string must invalidate this cache, not keep
+      # serving the old bytes forever.
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
-          key: src-nginx-${{ env.NGINX_VERSION }}
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
 
       # NO_CACHE=1: CodeQL's tracer only sees a compile that actually invokes
       # the compiler. ccache serves a hit without running cc, so a warm cache

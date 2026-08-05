@@ -113,22 +113,45 @@ elif [ "$MODE" = "coverage" ]; then
     ADD_MODULE="--add-module=$MODULE_DIR"
 fi
 
+# ccache wraps the compiler through nginx's own --with-cc, not a bare CC=
+# override: nginx's configure probes CC directly (feature checks, version
+# detection) and a bare `CC="ccache gcc"` trips some of those probes on older
+# nginx releases because they split CC on whitespace expecting one token.
+# --with-cc is the documented multi-word-safe hook. NO_CACHE=1 skips ccache
+# entirely -- CodeQL's tracer needs a real compile every run (see codeql.yml);
+# reuse that one flag rather than inventing a second bypass mechanism.
+#
+# CCACHE_COMPILERCHECK=content: hash the compiler binary's content, not its
+# mtime -- a self-hosted runner's toolchain can be reinstalled/upgraded
+# in-place with an unchanged path and a stale mtime, which would otherwise
+# serve stale objects compiled by a different compiler.
+REAL_CC="${CC:-cc}"
 WITH_CC=""
-if [ -n "${CC:-}" ]; then
+if [ "${NO_CACHE:-}" != "1" ] && command -v ccache >/dev/null 2>&1; then
+    export CCACHE_COMPILERCHECK=content
+    WITH_CC="--with-cc=ccache $REAL_CC"
+elif [ -n "${CC:-}" ]; then
     WITH_CC="--with-cc=$CC"
 fi
 
 cd "$ROOT/$DIR"
-# shellcheck disable=SC2086
-./configure \
-    --with-compat \
-    --with-debug \
-    --with-threads \
-    --with-http_realip_module \
-    $WITH_CC \
-    --with-cc-opt="$CC_OPT" \
-    --with-ld-opt="$LD_OPT" \
+# WITH_CC as an array element, not an unquoted expansion: "--with-cc=ccache
+# gcc" is ONE configure argument (auto/options reads everything after the
+# first "=" as $value), but an unquoted $WITH_CC word-splits it into two
+# shell words on the space and configure rejects the second as garbage.
+CONFIGURE_ARGS=(
+    --with-compat
+    --with-debug
+    --with-threads
+    --with-http_realip_module
+    --with-cc-opt="$CC_OPT"
+    --with-ld-opt="$LD_OPT"
     "$ADD_MODULE"
+)
+if [ -n "$WITH_CC" ]; then
+    CONFIGURE_ARGS+=("$WITH_CC")
+fi
+./configure "${CONFIGURE_ARGS[@]}"
 
 if [ "$MODE" != "asan" ] && [ "$MODE" != "coverage" ]; then
     make -j"$(nproc)" modules

@@ -1,4 +1,4 @@
-# sync-sha: 9f261a1246070e6c185656df58a9c19ac07033ce558a04470dce65d68d45b86d
+# sync-sha: 960948ff0c902ab0c56b837103c9ec127126795cda9f631b6479e3d1a67e9720
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -8,11 +8,13 @@ name: Security scanners
 # Action pins (keep in sync with build-test.yml header):
 # actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
 # actions/upload-artifact@v5 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
+# actions/cache@v4           -> 0057852bfaa89a56745cba8c7296529d2fc39830
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # The scanners job configures a real nginx source tree for clang-tidy headers.
   NGINX_VERSION: "1.31.1"
+  NGINX_VERSION_SHA256: "9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc"
 
 on:
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
@@ -49,11 +51,29 @@ jobs:
             pip3 install --quiet --user --break-system-packages semgrep
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
+      # Keyed on version+sha256, matching every other tarball cache in this
+      # repo: a re-pinned sha at the same version string must invalidate.
+      - name: Cache source tarball
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
+
       - name: Configure nginx src tree (clang-tidy headers)
+        # Digest-verified, not a bare wget: this step used to fetch the
+        # tarball unverified, so a compromised/corrupted upstream archive
+        # would silently feed clang-tidy (and go green). fetch-verify.sh is
+        # the same helper ci-build.sh uses for every other build in this
+        # repo -- reused here rather than writing a second fetcher.
         run: |
           set -euo pipefail
-          wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
-          tar -xzf "nginx-${NGINX_VERSION}.tar.gz"; cd "nginx-${NGINX_VERSION}"
+          mkdir -p .build
+          bash .github/scripts/fetch-verify.sh \
+            "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+            "$NGINX_VERSION_SHA256" \
+            ".build/nginx-${NGINX_VERSION}.tar.gz"
+          tar -xzf ".build/nginx-${NGINX_VERSION}.tar.gz"
+          cd "nginx-${NGINX_VERSION}"
           CC=gcc ./configure --with-compat --add-dynamic-module="$GITHUB_WORKSPACE" >/dev/null
           echo "NGINX_SRC_TREE=$PWD" >> "$GITHUB_ENV"
       - name: flawfinder

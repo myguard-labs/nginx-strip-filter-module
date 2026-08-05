@@ -1,11 +1,12 @@
 # ngx_http_strip_filter_module
 
-[![Build & Test](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml)
-[![Security scanners](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/security-scanners.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/security-scanners.yml)
+[![Build&Test](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/build-test.yml)
+[![Security Scanners](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/security-scanners.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/security-scanners.yml)
 [![Fuzzing](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/fuzzing.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/fuzzing.yml)
 [![Valgrind](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml)
-[![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
 [![CodeQL](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml)
+[![A/UBSan](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/asan.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/asan.yml)
+[![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
 
 A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
@@ -144,6 +145,26 @@ that way, and both comments record what the control taught us.
 The method is documented in full at
 [nginx-test-harness/docs/COVERAGE.md](https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE.md)
 and [COVERAGE-HOWTO.md](https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE-HOWTO.md).
+
+## CI
+
+Only `ci.yml` has a `pull_request` trigger. The PR-time workflows below are
+`workflow_call` members it lanes, so a PR asks for one run, not many.
+
+| Workflow | Trigger | Gates |
+|---|---|---|
+| `build-test.yml` | PR (via `ci.yml`) | build, Test::Nginx, ASan+UBSan, `unit-core` job (gcc+clang unit run of `ci/tests/unit/test_scan.c` against `src/strip_core.c` standalone, plus an ASan/UBSan unit run and an informational coverage report), `ci/tools/sync-stamp.sh --check` |
+| `security-scanners.yml` | PR (via `ci.yml`) | flawfinder, clang-tidy, semgrep over the module sources |
+| `fuzzing.yml` | PR (via `ci.yml`) | 20s/target fast fuzz regression across all 6 strip kinds (html/css/js/json/svg/xml) |
+| `valgrind.yml` | PR (via `ci.yml`) | Test::Nginx suite once under Valgrind memcheck (lite soak) |
+| `codeql.yml` | PR (via `ci.yml`) + monthly | CodeQL |
+| `asan.yml` | PR (via `ci.yml`) | dedicated ASan+UBSan run of the Test::Nginx suite under a static build |
+| `ci-deep.yml` | monthly + dispatch | exhaustive dynamic analysis — long fuzz, full memcheck + helgrind soak, Discord failure notify |
+| `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, commits an update to main if anything moved |
+
+`ci.yml` itself is the PR-time orchestrator (no gates of its own beyond lane
+dispatch). There is no `lint.yml` in this module yet — `ci/linter/` has not
+been ported from the reference skeleton, so no Lint row exists here.
 
 ## Installing from deb.myguard.nl
 

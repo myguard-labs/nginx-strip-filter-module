@@ -1,4 +1,4 @@
-# sync-sha: fd49c01c856065e90848413d0c9ae9da488fa197d96bf0ee5a70bfb66f070fed
+# sync-sha: 81238358d93a5b4fd3974c346b50dcc82c5635bb346597ad0248dc2e7e70dca9
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -63,6 +63,7 @@ jobs:
             build-essential curl libpcre2-dev zlib1g-dev
 
       - name: Initialize CodeQL
+        id: init
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           languages: c-cpp
@@ -88,3 +89,61 @@ jobs:
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           category: /language:c-cpp
+
+      - name: Assert non-zero translation-unit count
+        run: |
+          set -eu
+
+          # Locate the traced DB. The init action's own db-location output is
+          # the authority; fall back to searching RUNNER_TEMP only if that
+          # output is unexpectedly empty (defensive, still verified below).
+          DB_DIR="${{ steps.init.outputs.db-location }}"
+          if [ -z "$DB_DIR" ]; then
+            echo "WARNING: init action db-location output was empty; searching RUNNER_TEMP" >&2
+            DB_DIR=$(find "${RUNNER_TEMP}/codeql_databases" -maxdepth 1 -type d -name 'cpp*' | head -n1 || true)
+          fi
+
+          if [ -z "$DB_DIR" ] || [ ! -d "$DB_DIR" ]; then
+            echo "ERROR: could not locate CodeQL database directory (DB_DIR='$DB_DIR')"
+            exit 1
+          fi
+          echo "CodeQL database dir: $DB_DIR"
+          echo "DB dir listing (top level):"
+          find "$DB_DIR" -maxdepth 1 -mindepth 1
+
+          # Confirmed in CI: by the time `analyze` has finalized the database,
+          # raw trap files under trap/cpp are gone, and the source archive is
+          # a zip (src.zip), not a directory (src/). What's actually present
+          # at this point: codeql-database.yml, temp/, diagnostic/, db-cpp/
+          # (the QL dataset), results/, log/, src.zip. src.zip is the source
+          # archive -- one copy of every file CodeQL actually extracted --
+          # and is the ground truth for "how many translation units did this
+          # database really see" without extracting or depending on any
+          # `codeql` subcommand.
+          SRC_ZIP="$DB_DIR/src.zip"
+          echo "Source archive: $SRC_ZIP"
+          if [ ! -f "$SRC_ZIP" ]; then
+            echo "ERROR: source archive does not exist ('$SRC_ZIP')."
+            exit 1
+          fi
+
+          echo "source archive listing (first 20):"
+          unzip -l "$SRC_ZIP" | head -20
+
+          # Count only compiled source files (translation units proper), not
+          # headers -- headers get archived too but are not themselves TUs.
+          TU_COUNT=$(unzip -Z1 "$SRC_ZIP" | grep -Ec '\.(c|cc|cpp|cxx)$' || true)
+
+          echo "CodeQL traced translation units: $TU_COUNT"
+
+          case "$TU_COUNT" in
+            ''|*[!0-9]*)
+              echo "ERROR: translation-unit count is empty or non-numeric ('$TU_COUNT'). Treating as failure."
+              exit 1
+              ;;
+          esac
+
+          if [ "$TU_COUNT" -eq 0 ]; then
+            echo "ERROR: CodeQL traced zero translation units. Build filter may be too narrow."
+            exit 1
+          fi

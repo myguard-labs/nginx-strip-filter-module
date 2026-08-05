@@ -1,39 +1,45 @@
-# sync-sha: e8b822fb25459fcdd805b4eccbe4c440a05eb0bf4129e23c989898c9c2318c96
+# sync-sha: 934ecf459922a7b91d4033c6b8d237b5322a905f013294d08636dd1e0ce8ce31
 name: CI Deep
 
-# Exhaustive dynamic analysis — monthly cron + on-demand only, NEVER on PR.
-# The PR-time gates live in the standalone fuzzing.yml (fast fuzz regression),
-# valgrind.yml (memcheck lite) and security-scanners.yml (scanners) workflows;
-# THIS file keeps the exhaustive monthly+dispatch runs. codeql.yml is dropped
-# entirely: CodeQL / the GitHub Security tab is GitHub-Advanced-Security only
-# and does nothing on a private repo, so the SARIF-upload path is removed too —
-# the scanners still run and GATE on findings, they just don't upload.
+# Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
 #
-# Jobs: fuzz (all 6 kinds, 14400s/target) · memcheck soak · helgrind soak ·
-# scanners.
-#   * memcheck AND helgrind run the Test::Nginx ci/t/ suite under valgrind (the
-#     module ships a real filter, so ci/t/ exercises a live nginx worker). BOTH
-#     pass --suppressions=ci/tools/valgrind.supp; both pass --error-exitcode=99
-#     (helgrind additionally — a detected race MUST fail the job).
+# The PR-time gates are the standalone workflows: fuzzing.yml (120s fuzz
+# regression), valgrind.yml (60s memcheck lite) and security-scanners.yml. This
+# file is their long-running counterpart: hours of fuzz discovery, 600s memcheck
+# and helgrind soaks. Splitting them is what keeps the merge path fast while
+# still running the heavy analysis somewhere.
 #
-# Action pins (keep in sync with build-test.yml header):
+# Jobs: build-flavors (nginx mainline/stable + angie) · fuzz (long) · memcheck
+#   soak · helgrind soak.
+#   memcheck AND helgrind run via ci/tools/soak.sh (USE_VALGRIND / USE_HELGRIND),
+#   which passes --suppressions=ci/tools/valgrind.supp and --error-exitcode=99.
+#
+# build-flavors exists because build-test.yml (the fast PR gate) only builds
+# ONE pinned nginx version -- the module claims angie support and tracks both
+# nginx release branches, but nothing in CI actually built angie or nginx
+# stable until this job. It is here (monthly), not in the PR gate, because
+# each leg is a from-scratch configure+compile+Test::Nginx run and three of
+# them would blow the PR gate's <15min budget.
+#
+# No chat notifications by design: a failure here surfaces as a red run + the
+# uploaded crash/corpus artifacts + the job summary. Add a notify step only if
+# someone is actually going to act on it -- an unread alert is worse than none.
+#
+# Action pins (keep in sync with build-test.yml):
 # actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
 # actions/upload-artifact@v5 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
-# actions/cache@v4           -> 0057852bfaa89a56745cba8c7296529d2fc39830
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NGINX_VERSION: "1.31.1"
 
 on:
   schedule:
-    # Monthly, day 3 @ 03:30 UTC — staggered per repo so ci-deep runs
-    # don't pile up on the shared self-hosted runners.
-    - cron: "30 3 3 * *"
+    # Monthly, day 6 @ 03:30 UTC -- staggered from codeql.yml (day 4).
+    - cron: "30 3 6 * *"
   workflow_dispatch:
     inputs:
       fuzz_seconds:
-        description: "Per-target fuzz duration (seconds)"
+        description: "Fuzz duration (seconds)"
         required: false
         default: "3600"
 
@@ -45,6 +51,107 @@ permissions:
   contents: read
 
 jobs:
+  build-flavors:
+    # matrix.label, not the version: the job name is evaluated before any step
+    # runs, so the resolved version is not available here.
+    name: Build & Test::Nginx (${{ matrix.flavor }} ${{ matrix.label }})
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # A matrix is expanded before any step runs, so load-versions.sh cannot
+      # feed it. Each cell therefore names the versions.env KEY it wants, and
+      # the build step dereferences it after the pins are loaded -- keeping the
+      # versions themselves in one file instead of re-hardcoding them here.
+      matrix:
+        include:
+          - flavor: nginx
+            version_key: NGINX_MAINLINE
+            label: mainline
+          - flavor: nginx
+            version_key: NGINX_STABLE
+            label: stable
+          - flavor: angie
+            version_key: ANGIE_VERSION
+            label: angie
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl libpcre2-dev zlib1g-dev \
+            cpanminus libio-socket-ssl-perl
+          sudo cpanm --notest --quiet Test::Nginx
+
+      - name: Resolve matrix version
+        # The cell names a versions.env key (NGINX_MAINLINE/NGINX_STABLE/
+        # ANGIE_VERSION); dereference it now that load-versions.sh has put the
+        # pins in the environment, so later steps can use env.MATRIX_VERSION.
+        env:
+          # Through env, not inline ${{ }}: an expression expanded straight into
+          # a run: block is template injection (zizmor template-injection). The
+          # matrix values are repo-controlled today, but the safe shape costs
+          # nothing and stops the pattern from being copied somewhere it is not.
+          MATRIX_VERSION_KEY: ${{ matrix.version_key }}
+        run: |
+          key="$MATRIX_VERSION_KEY"
+          value="${!key:-}"
+          if [ -z "$value" ]; then
+            echo "::error::$key is not set in .github/versions.env"
+            exit 1
+          fi
+          echo "MATRIX_VERSION=$value" >> "$GITHUB_ENV"
+          echo "resolved $key=$value"
+
+      - name: Cache source tarball
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/${{ matrix.flavor }}-${{ env.MATRIX_VERSION }}.tar.gz
+          key: src-${{ matrix.flavor }}-${{ env.MATRIX_VERSION }}
+
+      - name: Build server and dynamic module
+        # angie names its binary objs/angie, nginx names it objs/nginx. Assert
+        # BOTH artifacts and export the server path, so the flavor's real binary
+        # name lives in one place instead of being hardcoded per step -- checking
+        # only the .so passes for angie while leaving the server unverified.
+        env:
+          MATRIX_FLAVOR: ${{ matrix.flavor }}   # via env, see the note above
+        run: |
+          set -euo pipefail
+          bash ci/tools/ci-build.sh "$MATRIX_FLAVOR" "$MATRIX_VERSION"
+          build=".build/$MATRIX_FLAVOR-${MATRIX_VERSION}-debug/objs"
+          case "$MATRIX_FLAVOR" in
+              angie) server="$build/angie" ;;
+              *)     server="$build/nginx" ;;
+          esac
+          test -f "$build/ngx_http_strip_filter_module.so"
+          test -x "$server"
+          echo "SERVER_BIN=$GITHUB_WORKSPACE/$server" >> "$GITHUB_ENV"
+          echo "MODULE_SO=$GITHUB_WORKSPACE/$build/ngx_http_strip_filter_module.so" >> "$GITHUB_ENV"
+
+      - name: Run ci/t/
+        env:
+          # Set by the build step above -- it resolves the flavor's binary name
+          # (angie vs nginx) once, after the version is known.
+          TEST_NGINX_BINARY: ${{ env.SERVER_BIN }}
+          TEST_NGINX_LOAD_MODULES: ${{ env.MODULE_SO }}
+          # See build-test.yml's identical setting for why this must be 20, not
+          # the ~2s Test::Nginx::Socket default.
+          TEST_NGINX_TIMEOUT: "20"
+          TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
+        # Test::Nginx probes a server on PATH for its version and Bailouts if it
+        # finds none -- TEST_NGINX_BINARY alone does not satisfy that probe, so
+        # the objs/ dir goes on PATH too.
+        run: PATH="$(dirname "$TEST_NGINX_BINARY"):$PATH" prove -v ci/t/
+
   fuzz:
     name: Fuzz (all 6 kinds, long)
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}

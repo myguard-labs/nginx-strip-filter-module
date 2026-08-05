@@ -266,6 +266,39 @@ test_css_hex(void)
      * shortened `#abc` (12 bytes). */
     is_min(STRIP_CSS, "a{color:#aabbcc", "a{color:#abc",
            "css: hex shortened when input ends exactly at 6 digits");
+
+    /* css_try_short_hex() early-return reject paths, exercised directly
+     * rather than through the pre-existing #aabbgg / #123456 cases above, so
+     * each guard has its own dedicated regression.
+     *
+     * CONTROL for the non-hex-digit guard: in css_try_short_hex()
+     *     if (!sc_is_hex(r0) || ...)  ->  if (0)
+     * `#12345g` is then read as 6 "hex" digits (g treated as hex), the pair
+     * check on garbage bytes may spuriously pass, and this case can shorten
+     * or corrupt a token that is not a valid hex color at all. */
+    is_min(STRIP_CSS, "a{color:#12345g}", "a{color:#12345g}",
+           "css: hex with a non-hex digit in the run is untouched");
+
+    /* CONTROL for the pair-mismatch guard: in css_try_short_hex()
+     *     if (sc_hex_lo(r0) != sc_hex_lo(r1) || ...)  ->  if (0)
+     * `#123456` would then shorten to a wrong 3-digit color, `#135` — not the
+     * same color as `#123456` at all, since doubling only round-trips equal
+     * pairs. */
+    is_min(STRIP_CSS, "a{color:#123456}", "a{color:#123456}",
+           "css: hex pairs that don't match are not shortened (distinct color)");
+
+    /* CONTROL for the 7th-hex-digit guard: in css_try_short_hex()
+     *     unsigned char after = (i + 6 < len) ? src[i + 6] : 0;
+     *     if (after != 0 && sc_is_hex(after)) { return i; }  ->  if (0)
+     * `#a1b2c3d` is a 7-hex-digit token (not a valid color at all); without
+     * the guard the first 6 digits get read as #a1b2c3 and — since its pairs
+     * don't match — left alone, silently masking the guard's real effect.
+     * `#aabbccd` (matching pairs + a trailing hex digit) is the oracle that
+     * actually distinguishes "guard fired" from "pairs just didn't match":
+     * with the guard, this 7-digit run must stay untouched; without it, the
+     * matching first 6 digits would shorten to `#abc` + trailing `d`. */
+    is_min(STRIP_CSS, "a{color:#aabbccd}", "a{color:#aabbccd}",
+           "css: matching-pair hex followed by a 7th hex digit is not shortened");
 }
 
 
@@ -339,6 +372,27 @@ test_css_numbers(void)
      * (10 bytes). */
     is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0px", "a{margin:0",
                  "css: unit stripped when input ends exactly at the unit (aggressive)");
+
+    /* css_skip_zero_unit() boundary-check and no-match reject paths, under
+     * AGGRESSIVE (the only mode that calls it).
+     *
+     * CONTROL for the boundary check: in css_skip_zero_unit()
+     *     if (after == 0 || sc_is_space(after) || after == ';' || ...)
+     *       -> if (1)
+     * `0pxfoo` would then have its `px` recognized as a unit even though it
+     * is immediately followed by more ident characters (`foo`), producing
+     * `a{margin:0foo}` — a different, meaningless declaration, instead of
+     * leaving the whole `0pxfoo` ident alone. */
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0pxfoo}",
+                 "a{margin:0pxfoo}",
+                 "css: 0pxfoo not stripped, unit not followed by a boundary (aggressive)");
+
+    /* CONTROL for the no-match fallthrough: in css_skip_zero_unit(), force a
+     * match regardless of the unit table, e.g. `return i + ul;` unconditional
+     * for the first table entry — `0zz` has no CSS unit at all and must be
+     * left as the bare ident it is. */
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{margin:0zz}", "a{margin:0zz}",
+                 "css: 0zz not stripped, no unit in the table matches (aggressive)");
 
     /* CSS Values 3 § 5: a <number> may omit the integer part when it is zero.
      * NOT gated (leading-zero strip, distinct from unit stripping) — applies
@@ -446,6 +500,20 @@ test_js_regex(void)
 
     ok_invariant(STRIP_JS, "return /unterminated", 20,
                  "js: unterminated regex stays in bounds");
+
+    /* js_regex_allowed(): `.` before a trailing identifier means the
+     * identifier is a property access, even when that property's name spells
+     * a keyword the bare-word path would otherwise treat as regex-inducing
+     * (`return`, `typeof`, ...). `foo.return` must resolve as division, same
+     * as `foo.in` above, using the specific keyword the AUD note calls out.
+     *
+     * CONTROL: in js_regex_allowed()
+     *     if (k > 0 && dst[k - 1] == '.') { return 0; }  ->  removed
+     * `foo.return / 2` would then hit the keyword table for `return` and be
+     * read as a regex position, corrupting the surrounding whitespace
+     * handling around the division operator. */
+    is_min(STRIP_JS, "foo.return  /  2;", "foo.return/2;",
+           "js: '.' before a keyword-spelled property name is still division");
 }
 
 
@@ -564,6 +632,65 @@ test_js_literals(void)
     /* After an operator it is a regex again. */
     is_min(STRIP_JS, "var x = 1 + /a  b/;", "var x=1+/a  b/;",
            "js: slash after an operator is a regex");
+
+    /* js_flush_pending(): the very first byte of input starting a string
+     * literal reaches the `o == 0` early return (nothing buffered yet, no
+     * preceding token to weld a separator onto). A conservative bounds bug in
+     * that guard reads dst[o - 1] one byte before the buffer.
+     *
+     * CONTROL: in js_flush_pending()
+     *     if (!(pending_nl || pending_sp) || o == 0) { return o; } -> drop
+     *     the `|| o == 0` half of the condition
+     * With no chars buffered and no pending whitespace this specific input
+     * cannot observably diverge in *output* (there is nothing to flush
+     * either way), so the case is a bounds/crash oracle, not an output oracle
+     * — verified separately as an invariant check below the exact-match one,
+     * matching the file's own boundary-check convention. */
+    is_min(STRIP_JS, "\"x\"", "\"x\"",
+           "js: string as the very first byte of input");
+
+    /* A standalone multi-line JS block comment with no surrounding statements
+     * — the loop's had_nl branch (pending_nl = 1) with nothing before or
+     * after it to observe the flush against directly; combined with the
+     * trailing-content case already above (a = 1, comment, b = 2) this pins
+     * the branch even when the comment is the whole program.
+     *
+     * CONTROL: in strip_js()'s block-comment branch
+     *     if (had_nl) { pending_nl = 1; } else { pending_sp = 1; } -> always
+     *     pending_sp = 1
+     * has no observable effect on THIS input alone (no bytes follow to flush
+     * against), so it is likewise an invariant/bounds oracle for the isolated
+     * case; the ASI-preserving *output* oracle for this branch is the
+     * existing "js: multi-line block comment leaves an ASI newline" case
+     * above, which has trailing content to observe the flush against. */
+    ok_invariant(STRIP_JS, "/* line1\n line2 */", 19,
+                 "js: standalone multi-line block comment stays in bounds");
+
+    /* strip_js() regex scanning: a character class inside the regex body may
+     * contain an unescaped `/` and it must not end the literal — `[a/b]` is
+     * one character class alternative-set, not "regex /[a/ followed by loose
+     * text b]/ regex".
+     *
+     * CONTROL: in strip_js()'s regex-copy loop
+     *     if (d == '[') { in_class = 1; } else if (d == ']') { in_class = 0; }
+     *       -> both branches removed
+     * `/[a/b]/` would then be read as the regex `/[a/` (ending at the first
+     * unescaped `/`), leaving `b]/` as trailing, differently-minified code —
+     * observable because the trailing `]/ ` no longer round-trips through the
+     * regex path verbatim. */
+    is_min(STRIP_JS, "return /[a/b]/;", "return /[a/b]/;",
+           "js: unescaped slash inside a regex character class does not end it");
+
+    /* An unterminated regex that runs into a newline must bail back to
+     * ordinary token scanning at that newline rather than swallow the rest of
+     * the file as regex body — the dedicated oracle already above
+     * ("js: newline ends an unterminated regex, rest still minified") proves
+     * this with trailing code; this input additionally isolates the case
+     * where the newline is the LAST byte-run before EOF, with nothing after
+     * it, so the loop's newline-break arm is reached without relying on any
+     * later token to observe a side effect. */
+    ok_invariant(STRIP_JS, "return /unterminated\n", 22,
+                 "js: unterminated regex bails at newline with nothing after it");
 
     ok_invariant(STRIP_JS, "var s = \"unterminated", 21,
                  "js: unterminated string stays in bounds");

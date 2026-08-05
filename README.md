@@ -133,10 +133,16 @@ prove -v ci/t/
 
 ### Coverage
 
-The goal is 100% coverage of `strip_core.c`; the current figure is **99.79%**,
-with the single uncovered line carrying a `COVERAGE:` comment explaining why it
-is unreachable. That is the standard: every uncovered line either gets a real
-test or an honest note.
+The goal is 100% coverage of `strip_core.c`; the current figure is **99.42%**
+under the unit suite below, with three uncovered lines — `js_regex_allowed()`'s
+trailing-space loop, and the `c == '<'` inter-tag branch in each of
+`strip_html()` and `strip_svg()` — each carrying a comment explaining why the
+current callers cannot reach it. That is the standard: every uncovered line
+either gets a real test or an honest note.
+
+That figure covers `strip_core.c` under `ci/tests/unit/` alone. `ci/tools/coverage.sh`
+reports a lower, whole-project number (it merges the nginx-typed module file and
+the live `ci/t/` layer); the two measure different things and neither is a gate.
 
 ```bash
 work=$(mktemp -d)

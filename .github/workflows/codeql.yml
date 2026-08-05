@@ -1,25 +1,39 @@
-# sync-sha: c3e0a9b8bb33ab731ac5c608e9386a7dc21c2bde961b4ddbb43eee2a510e718a
+# sync-sha: fd49c01c856065e90848413d0c9ae9da488fa197d96bf0ee5a70bfb66f070fed
 name: CodeQL
+
+# CodeQL on the module TU only.
+#
+# The critical detail is the `module` build mode. For COMPILED languages CodeQL
+# populates its database from whatever the traced build actually compiles -- the
+# `paths` / `paths-ignore` filters are silently IGNORED. Tracing a full nginx
+# build therefore pulls all of upstream nginx into the database and floods the
+# Security tab with alerts against code we neither own nor patch. Scope is
+# instead enforced by the build: ci-build.sh's `module` mode runs
+# `make modules` only, so the nginx core is never compiled and never traced.
+#
+# Runs on ubuntu-latest, not the self-hosted runners: it needs no nginx binary,
+# and the hosted image already ships the CodeQL bundle.
+#
+# Action pins:
+# actions/checkout@v5      -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+# actions/cache@v4         -> 0057852bfaa89a56745cba8c7296529d2fc39830
+# github/codeql-action@v4  -> 8aad20d150bbac5944a9f9d289da16a4b0d87c1e
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NGINX_VERSION: "1.31.1"
 
 on:
-  schedule:
-    - cron: "47 4 3 * *"
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
   # bounded. No push/pull_request trigger here on purpose: two entry points
   # would run this twice per PR and defeat the laning.
   workflow_call: {}
+  schedule:
+    # Monthly, day 4 @ 04:47 UTC. Staggered away from ci-deep.yml (day 6) so
+    # the two heavy scheduled runs never contend for the same runners.
+    - cron: "47 4 4 * *"
 
 concurrency:
-  # github.workflow is part of the group for the same reason it is in every
-  # other member: a called workflow inherits the CALLER's github.workflow, so
-  # including it puts the standalone run and the ci.yml-called run in different
-  # groups. Without it both compute "codeql-<ref>", and cancel-in-progress makes
-  # one kill the other -- which reads as "CodeQL was never called".
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  group: codeql-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -32,27 +46,29 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
+      security-events: write   # required to upload the SARIF results
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl libpcre2-dev zlib1g-dev
+          sudo apt-get install -y \
+            build-essential curl libpcre2-dev zlib1g-dev
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           languages: c-cpp
           queries: security-extended
-          config: |
-            paths:
-              - src/ngx_http_strip_filter_module.c
-              - src/strip_core.c
-            paths-ignore:
-              - .build/**
+          # Deliberately no paths/paths-ignore: they do nothing for C/C++ (see
+          # the header comment). The `module` build below is what scopes this.
 
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -60,8 +76,13 @@ jobs:
           path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
           key: src-nginx-${{ env.NGINX_VERSION }}
 
-      - name: Build traced source
-        run: bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" module
+      # NO_CACHE=1: CodeQL's tracer only sees a compile that actually invokes
+      # the compiler. ccache serves a hit without running cc, so a warm cache
+      # silently produces a database CodeQL can't populate -- "no source seen
+      # during build" -- while the build itself looks fine. Tracing needs a
+      # real compile every run; ccache and the CodeQL job are incompatible.
+      - name: Build traced source (module only)
+        run: NO_CACHE=1 bash ci/tools/ci-build.sh nginx "$NGINX_VERSION" module
 
       - name: Analyze
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4

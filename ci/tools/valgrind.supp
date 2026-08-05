@@ -1,31 +1,90 @@
-# Valgrind suppressions for nginx internals that are not module bugs.
+# Valgrind suppressions for tools/soak.sh.
+#
+# ONLY nginx-core / libc noise belongs here. Never suppress a stack that runs
+# through ngx_http_strip_* (or your renamed module): that is the code the soak
+# exists to check, and a suppression there turns the whole gate into a no-op
+# that still reports green.
+#
+# Every entry below was derived from an actual `USE_VALGRIND=1 tools/soak.sh`
+# run against nginx 1.31.1 -- not guessed. All are process-lifetime allocations
+# that nginx deliberately never frees: they live until exit, so a leak checker
+# reports them on every clean run. Verify a new one the same way before adding
+# it: confirm the stack has no module frame, then suppress the narrowest match.
+#
+# Check your work with:  valgrind --suppressions=ci/tools/valgrind.supp ... ; the
+# ERROR SUMMARY line reports how many were actually suppressed. A suppression
+# that matches nothing (suppressed: 0) is dead weight and should be deleted.
 
-# nginx slab allocator deliberately leaves memory unfreed at fast shutdown.
+# nginx copies the environment into a heap block at startup and never frees it
+# (it must outlive every worker, and the process is about to exit anyway).
 {
-   nginx_slab_alloc
+   nginx-set-environment-startup-alloc
    Memcheck:Leak
-   match-leak-kinds: definite
+   match-leak-kinds: definite,possible
    fun:malloc
-   ...
    fun:ngx_alloc
+   fun:ngx_set_environment
+   ...
 }
 
-# nginx pool is never freed during the master-process exit path.
+# The CRC32 table is a one-shot global, built before the cycle exists.
 {
-   nginx_pool_create
+   nginx-crc32-table-init
    Memcheck:Leak
-   match-leak-kinds: definite,indirect
+   match-leak-kinds: definite,possible
    fun:malloc
+   fun:ngx_alloc
+   fun:ngx_crc32_table_init
    ...
-   fun:ngx_create_pool
 }
 
-# OpenSSL internal init (pulled in by --with-http_ssl_module).
+# The worker's connection / read-event / write-event arrays. Allocated once for
+# the lifetime of the worker and intentionally never freed.
 {
-   openssl_init
+   nginx-event-core-worker-arrays
    Memcheck:Leak
-   match-leak-kinds: reachable
+   match-leak-kinds: definite,possible
    fun:malloc
+   fun:ngx_alloc
+   fun:ngx_event_process_init
    ...
-   fun:OPENSSL_init_ssl
+}
+
+# The cycle's own pool and the conf-parse arena: still reachable at exit by
+# design. Kept broad because the exact frame varies with the build.
+{
+   nginx-init-cycle-pool
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   ...
+   fun:ngx_init_cycle
+   ...
+}
+
+{
+   nginx-conf-parse-arena
+   Memcheck:Leak
+   match-leak-kinds: definite,possible,reachable
+   ...
+   fun:ngx_conf_parse
+   ...
+}
+
+# --- Helgrind (USE_HELGRIND=1) ---------------------------------------------
+# nginx signals the worker via a signal handler / self-pipe; helgrind cannot see
+# the happens-before edge and reports a benign race on the flag.
+{
+   nginx-signal-handler-flag-race
+   Helgrind:Race
+   ...
+   fun:ngx_signal_handler
+   ...
+}
+
+{
+   nginx-master-worker-status-race
+   Helgrind:Race
+   ...
+   fun:ngx_process_get_status
+   ...
 }

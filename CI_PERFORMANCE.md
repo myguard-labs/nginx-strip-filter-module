@@ -51,11 +51,29 @@ The queue time is the interval from run creation (12:59:07Z) to job start. Execu
 
 ### Self-Hosted Runner Slot Usage
 
-All 9 self-hosted jobs target `["self-hosted","builder02","lxc"]` — the same runner label set. This repository pins a **single self-hosted builder** (builder02) with LXC container support.
+All 9 self-hosted jobs target `["self-hosted","builder02","lxc"]` — the same
+runner label set. `builder02` is one physical host, but a host is not a slot:
+concurrency is bounded by the number of registered *runner processes* carrying
+that label.
 
-The workflow concurrency groups (`ci-`, `asan-`, `valgrind-`, `security-scanners-`, `fuzzing-`) prevent unrelated jobs from running concurrently on the same machine. All jobs in this single run completed serially or in controlled parallelism.
+Measured, not inferred (`gh api orgs/myguard-labs/actions/runners`, 2026-08-05):
 
-**Real self-hosted runner slot count:** 1 (builder02 is a single machine pinned by labels)
+| Label group | Registered runners | Matching `builder02` + `lxc` |
+|---|---|---|
+| `builder02-runner-01..04` | 4 | 4 |
+| `builder02-docker-01..02` | 2 | 0 (docker label set, not `lxc`) |
+| `builder03-*` | 7 | 0 (different host label) |
+
+**Real self-hosted runner slot count: 4** (`builder02-runner-01..04`).
+
+Note the repo-scoped endpoint (`repos/.../actions/runners`) returns
+`total_count: 0` — these runners are registered at the **org** level, so a
+repo-scoped query reads as "no self-hosted runners" and must not be used as
+evidence.
+
+This is corroborated by the run itself: 8 of the 9 self-hosted jobs started
+within 12:59:10–12:59:11Z, which is impossible on a single slot. The 4-slot
+ceiling is what cards 37–38 must size lanes against.
 
 ### GitHub-Hosted Runner Slots
 

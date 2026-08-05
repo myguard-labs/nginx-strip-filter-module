@@ -1,4 +1,4 @@
-# sync-sha: 0d637409358c664cf4846cfdcb281c49a91b924a70480cacbe609094c56f62de
+# sync-sha: 3dc36e580647f2d711c42731916a03953b575c14d025162a84c25ca0a6ac39ad
 name: Build and Test
 
 env:
@@ -195,6 +195,13 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 20
     needs: build
+    env:
+      # This job's OWN 64-wide port band. build-test.yml, asan.yml and
+      # valgrind.yml pin the same self-hosted runner and have disjoint
+      # concurrency groups, so nothing serialises them: two runtime suites can
+      # start at the same instant, and a shared default port makes the later
+      # one's listener collide with the earlier one's server.
+      TEST_BASE_PORT: '19200'
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -211,11 +218,19 @@ jobs:
           sudo apt-get install -y cpanminus libio-socket-ssl-perl
           sudo cpanm --notest --quiet Test::Nginx
 
+      # Runs BEFORE the first step that binds the band -- `prove` below. Fails
+      # if the band reaches the kernel ephemeral range or is already occupied
+      # by a leftover server, either of which would otherwise surface inside
+      # the suite as a bind error or a timeout with no cause attached.
+      - name: Verify this job's port band is free
+        run: bash ci/tools/max-port.sh "$TEST_BASE_PORT"
+
       - name: Run Test::Nginx suite
         env:
           TEST_NGINX_SERVROOT: ${{ github.workspace }}/ci/t/servroot
           TEST_NGINX_BINARY: ${{ github.workspace }}/nginx-bin/nginx
           TEST_NGINX_LOAD_MODULES: ${{ github.workspace }}/nginx-bin/ngx_http_strip_filter_module.so
+          TEST_NGINX_PORT: ${{ env.TEST_BASE_PORT }}
         run: |
           chmod +x nginx-bin/nginx
           prove -v ci/t/

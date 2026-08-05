@@ -127,6 +127,12 @@ if ! bash ci/linter/lint-docs-drift.sh; then
   status=1
 fi
 
+echo "== flush-bound (ngx_http_strip_flush() copy loop stays source-bounded) =="
+if ! python3 ci/tools/check-flush-bound.py; then
+  echo "run-all.sh: flush-bound finding" >&2
+  status=1
+fi
+
 echo "== ruff (Python lint, gate on default rule set) =="
 mapfile -t py_files < <(git ls-files -z '*.py' | tr '\0' '\n' | sort)
 if [ "${#py_files[@]}" -gt 0 ]; then

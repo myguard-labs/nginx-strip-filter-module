@@ -436,23 +436,44 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
     ngx_chain_t  *cl, *out;
     ngx_buf_t    *b;
     u_char       *src, *p, *dst;
-    size_t        outlen;
+    size_t        outlen, copied;
 
     src = ngx_pnalloc(r->pool, ctx->len ? ctx->len : 1);
     if (src == NULL) {
         return NGX_ERROR;
     }
 
-    p = src;
-    for (cl = ctx->in; cl; cl = cl->next) {
-        size_t n = ngx_buf_size(cl->buf);
-        /* only in-memory buffers reach here (the body filter stops buffering
-         * on the first file-backed buffer); guard anyway against pos misuse */
-        if (n > 0 && ngx_buf_in_memory(cl->buf)) {
+    /* Bound the copy by the allocation size, not by trusting ctx->len to
+     * already match the chain's true byte count. ctx->len stops advancing
+     * once ctx->buffering clears (body filter, above) while the
+     * accumulation chain keeps growing unconditionally, so the two CAN
+     * diverge; clamping here makes the copy safe by construction regardless
+     * of any caller-side invariant. */
+    {
+        size_t remaining = ctx->len ? ctx->len : 1;
+
+        p = src;
+        for (cl = ctx->in; cl && remaining > 0; cl = cl->next) {
+            size_t n = ngx_buf_size(cl->buf);
+            /* only in-memory buffers reach here (the body filter stops
+             * buffering on the first file-backed buffer); guard anyway
+             * against pos misuse */
+            if (n == 0 || !ngx_buf_in_memory(cl->buf)) {
+                continue;
+            }
+            if (n > remaining) {
+                n = remaining;
+            }
             ngx_memcpy(p, cl->buf->pos, n);
             p += n;
+            remaining -= n;
         }
     }
+
+    /* Bytes ACTUALLY copied, not the (possibly stale) ctx->len: if the
+     * chain were shorter than ctx->len, using ctx->len below would feed
+     * uninitialized tail bytes of src into the minifier. */
+    copied = (size_t) (p - src);
 
     /* output is never larger than input */
     dst = ngx_pnalloc(r->pool, ctx->len ? ctx->len : 1);
@@ -460,7 +481,7 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
         return NGX_ERROR;
     }
 
-    outlen = strip_minify(ctx->kind, src, ctx->len, dst);
+    outlen = strip_minify(ctx->kind, src, copied, dst);
 
     b = ngx_calloc_buf(r->pool);
     if (b == NULL) {

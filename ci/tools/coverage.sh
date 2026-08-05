@@ -98,6 +98,13 @@ TEST_NGINX_PORT="${TEST_BASE_PORT:-18880}" \
 TEST_NGINX_SERVROOT="$ROOT/ci/t/servroot" \
     prove ci/t/
 
+# The request-path suite must produce arcs; without them, the report measures
+# only unit-test coverage and silently under-measures the full module.
+if ! compgen -G "$OBJDIR/*.gcda" >/dev/null; then
+    echo "FAIL: integration suite produced no module .gcda data." >&2
+    exit 1
+fi
+
 echo "==> Report"
 mkdir -p "$OUT"
 GCOVR_ARGS=(

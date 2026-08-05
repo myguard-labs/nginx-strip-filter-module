@@ -201,8 +201,15 @@ if ! targets >"$raw_list"; then
     exit 2
 fi
 
+sorted_list="$(mktemp)"
+trap 'rm -f "$raw_list" "$sorted_list"' EXIT
+if ! LC_ALL=C sort -z -- "$raw_list" >"$sorted_list"; then
+    echo "sync-stamp: target sort failed -- refusing to report a partial result" >&2
+    exit 2
+fi
+
 targets_list=()
-mapfile -t -d '' targets_list < <(LC_ALL=C sort -z -- "$raw_list")
+mapfile -t -d '' targets_list <"$sorted_list"
 
 rc=0
 count=0

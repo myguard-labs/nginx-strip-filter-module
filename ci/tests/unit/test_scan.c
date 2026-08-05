@@ -328,7 +328,7 @@ test_css_basic(void)
     is_min(STRIP_CSS, "div   >   p{color:red}", "div>p{color:red}",
            "css: space around '>' dropped");
 
-    ok_invariant(STRIP_CSS, "a{content:\"unterminated", 22,
+    ok_invariant(STRIP_CSS, "a{content:\"unterminated", 23,
                  "css: unterminated string stays in bounds");
     ok_invariant(STRIP_CSS, "a{/* unterminated", 17,
                  "css: unterminated comment stays in bounds");
@@ -546,7 +546,7 @@ test_json(void)
     is_min(STRIP_JSON, "{\"a  b\" : 1}", "{\"a  b\":1}",
            "json: whitespace inside a key kept");
 
-    ok_invariant(STRIP_JSON, "{\"a\":\"unterminated", 19,
+    ok_invariant(STRIP_JSON, "{\"a\":\"unterminated", 18,
                  "json: unterminated string stays in bounds");
     ok_invariant(STRIP_JSON, "{\"a\":\"x\\", 8,
                  "json: trailing backslash stays in bounds");

@@ -191,40 +191,46 @@ ngx_http_strip_select(ngx_http_request_t *r, ngx_http_strip_loc_conf_t *slcf,
 {
     ngx_str_t  ct = r->headers_out.content_type;
 
+    /* Consider only the media-type token, before any ; charset= part, so a
+     * longer registered media type that merely starts with one of our
+     * literals (e.g. application/json-seq, RFC 7464) does not false-match a
+     * shorter one (application/json) via a bare prefix compare. */
+    size_t mt = 0;
+    while (mt < ct.len && ct.data[mt] != ';' && ct.data[mt] != ' ') {
+        mt++;
+    }
+
     if (slcf->css
-        && ct.len >= sizeof("text/css") - 1
-        && ngx_strncasecmp(ct.data, (u_char *) "text/css",
-                           sizeof("text/css") - 1) == 0)
+        && mt == sizeof("text/css") - 1
+        && ngx_strncasecmp(ct.data, (u_char *) "text/css", mt) == 0)
     {
         *kind = STRIP_CSS;
         return 1;
     }
 
     if (slcf->js
-        && ((ct.len >= sizeof("application/javascript") - 1
+        && ((mt == sizeof("application/javascript") - 1
              && ngx_strncasecmp(ct.data, (u_char *) "application/javascript",
-                                sizeof("application/javascript") - 1) == 0)
-            || (ct.len >= sizeof("text/javascript") - 1
+                                mt) == 0)
+            || (mt == sizeof("text/javascript") - 1
                 && ngx_strncasecmp(ct.data, (u_char *) "text/javascript",
-                                   sizeof("text/javascript") - 1) == 0)))
+                                   mt) == 0)))
     {
         *kind = STRIP_JS;
         return 1;
     }
 
     if (slcf->json
-        && ct.len >= sizeof("application/json") - 1
-        && ngx_strncasecmp(ct.data, (u_char *) "application/json",
-                           sizeof("application/json") - 1) == 0)
+        && mt == sizeof("application/json") - 1
+        && ngx_strncasecmp(ct.data, (u_char *) "application/json", mt) == 0)
     {
         *kind = STRIP_JSON;
         return 1;
     }
 
     if (slcf->svg
-        && ct.len >= sizeof("image/svg+xml") - 1
-        && ngx_strncasecmp(ct.data, (u_char *) "image/svg+xml",
-                           sizeof("image/svg+xml") - 1) == 0)
+        && mt == sizeof("image/svg+xml") - 1
+        && ngx_strncasecmp(ct.data, (u_char *) "image/svg+xml", mt) == 0)
     {
         *kind = STRIP_SVG;
         return 1;
@@ -232,13 +238,7 @@ ngx_http_strip_select(ngx_http_request_t *r, ngx_http_strip_loc_conf_t *slcf,
 
     if (slcf->xml) {
         /* match text/xml, application/xml, and any structured-syntax
-         * +xml subtype (application/rss+xml, application/atom+xml, …).
-         * Consider only the media-type token, before any ; charset= part. */
-        size_t mt = 0;
-        while (mt < ct.len && ct.data[mt] != ';' && ct.data[mt] != ' ') {
-            mt++;
-        }
-
+         * +xml subtype (application/rss+xml, application/atom+xml, …). */
         if ((mt == sizeof("text/xml") - 1
              && ngx_strncasecmp(ct.data, (u_char *) "text/xml", mt) == 0)
             || (mt == sizeof("application/xml") - 1

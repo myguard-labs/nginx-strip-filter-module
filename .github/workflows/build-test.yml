@@ -1,4 +1,4 @@
-# sync-sha: 3dc36e580647f2d711c42731916a03953b575c14d025162a84c25ca0a6ac39ad
+# sync-sha: d9c0e59ca51853891f37fd9effecebc54cce207f90cd99e8a5aa62ad07ab54ea
 name: Build and Test
 
 env:
@@ -234,3 +234,14 @@ jobs:
         run: |
           chmod +x nginx-bin/nginx
           prove -v ci/t/
+
+      # Live-server cases ci/t/ cannot express: chunk-seam accumulation,
+      # concurrent per-request isolation and reload-under-load, each against
+      # this job's already-verified port band offset by +40 so it cannot
+      # collide with prove's own use of the band above.
+      - name: Run live-server runtime suite
+        run: |
+          python3 ci/tools/test_runtime.py \
+            --nginx nginx-bin/nginx \
+            --module nginx-bin/ngx_http_strip_filter_module.so \
+            --port $((TEST_BASE_PORT + 40))

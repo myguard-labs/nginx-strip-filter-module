@@ -1,4 +1,4 @@
-# sync-sha: ffce1337359951fbab2ce623ea66cbc2538ef36bd6160a0a8cdde3ca9f0f5043
+# sync-sha: 176492138ca4fd362f5a32b4f200e6fca40e4e6db5d475f34306406ce9ee9306
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -63,6 +63,7 @@ jobs:
             build-essential curl libpcre2-dev zlib1g-dev
 
       - name: Initialize CodeQL
+        id: init
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           languages: c-cpp
@@ -91,11 +92,43 @@ jobs:
 
       - name: Assert non-zero translation-unit count
         run: |
-          DB_DIR="${RUNNER_TEMP}/codeql_databases/cpp"
-          TU_COUNT=$(codeql database info "$DB_DIR" --format json 2>/dev/null | \
-                     jq -r '.translationUnits // 0')
+          set -eu
+
+          # Locate the traced DB. The init action's own db-location output is
+          # the authority; fall back to searching RUNNER_TEMP only if that
+          # output is unexpectedly empty (defensive, still verified below).
+          DB_DIR="${{ steps.init.outputs.db-location }}"
+          if [ -z "$DB_DIR" ]; then
+            echo "WARNING: init action db-location output was empty; searching RUNNER_TEMP" >&2
+            DB_DIR=$(find "${RUNNER_TEMP}/codeql_databases" -maxdepth 1 -type d -name 'cpp*' | head -n1 || true)
+          fi
+
+          if [ -z "$DB_DIR" ] || [ ! -d "$DB_DIR" ]; then
+            echo "ERROR: could not locate CodeQL database directory (DB_DIR='$DB_DIR')"
+            exit 1
+          fi
+          echo "CodeQL database dir: $DB_DIR"
+
+          # Print the raw JSON during development/debugging so a future shape
+          # change is visible in the log instead of silently swallowed.
+          INFO_JSON=$(codeql database info "$DB_DIR" --format json)
+          echo "codeql database info output:"
+          echo "$INFO_JSON"
+
+          TU_COUNT=$(printf '%s' "$INFO_JSON" | jq -r '
+            .translationUnits
+            // .language_stats[]?.numberOfFilesExtracted
+            // empty
+          ')
 
           echo "CodeQL traced translation units: $TU_COUNT"
+
+          case "$TU_COUNT" in
+            ''|*[!0-9]*)
+              echo "ERROR: translation-unit count is empty or non-numeric ('$TU_COUNT'). Treating as failure."
+              exit 1
+              ;;
+          esac
 
           if [ "$TU_COUNT" -eq 0 ]; then
             echo "ERROR: CodeQL traced zero translation units. Build filter may be too narrow."

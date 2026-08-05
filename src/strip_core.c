@@ -16,6 +16,18 @@
 
 #include <string.h>
 
+/* ---- sanitizer reachability counter ------------------------------------ */
+
+/* Counter to prove strip_minify() is exercised by the test suite.
+ * Incremented on every call; query via a query function for testing. */
+static unsigned long g_strip_minify_calls = 0;
+
+unsigned long
+strip_minify_call_count(void)
+{
+    return g_strip_minify_calls;
+}
+
 /* ---- byte classifiers -------------------------------------------------- */
 
 static int
@@ -1020,6 +1032,8 @@ strip_minify(strip_kind_t kind, const unsigned char *src, size_t len,
 {
     size_t n;
     int src_had_nl = (len > 0 && src[len - 1] == '\n');
+
+    g_strip_minify_calls++;
 
     switch (kind) {
     case STRIP_JSON:

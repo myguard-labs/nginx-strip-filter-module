@@ -768,6 +768,62 @@ test_dispatch(void)
 }
 
 
+/* ---- boundary cases for comprehensive coverage ----------------------- */
+
+static void
+test_boundary_cases(void)
+{
+    /* JSON: escape sequences at various positions */
+    is_min(STRIP_JSON, "{\"a\":\"\\\\\"}","{\"a\":\"\\\\\"}",
+           "json: backslash escape sequence preserved");
+    is_min(STRIP_JSON, "{\"a\":\"\\n\"}","{\"a\":\"\\n\"}",
+           "json: newline escape preserved");
+    is_min(STRIP_JSON, "{\"a\":\"\\t\"}","{\"a\":\"\\t\"}",
+           "json: tab escape preserved");
+
+    /* CSS: edge cases with whitespace collapsing around operators */
+    is_min(STRIP_CSS, "a{margin:1px+2px}", "a{margin:1px+2px}",
+           "css: plus operator kept");
+    is_min(STRIP_CSS, "a{calc(1px + 2px)}", "a{calc(1px + 2px)}",
+           "css: operator with spaces in calc");
+
+    /* HTML: edge cases with void elements and attributes */
+    is_min(STRIP_HTML, "<br/>", "<br/>",
+           "html: self-closing br element");
+    is_min(STRIP_HTML, "<img src=x alt=y>", "<img src=x alt=y>",
+           "html: multiple unquoted attributes");
+
+    /* JS: edge cases with operators adjacent to text */
+    is_min(STRIP_JS, "a+++b", "a+++b",
+           "js: plus-plus (increment) followed by operand");
+    is_min(STRIP_JS, "a-- >b", "a-->b",
+           "js: decrement followed by > forms HTML comment opener");
+
+    /* CSS: minimum non-zero lengths */
+    is_min(STRIP_CSS, "a{width:1px}", "a{width:1px}",
+           "css: minimum length unit kept");
+
+    /* HTML: empty vs whitespace in text nodes */
+    is_min(STRIP_HTML, "<p></p>", "<p></p>",
+           "html: empty paragraph");
+    is_min(STRIP_HTML, "<p> </p>", "<p></p>",
+           "html: paragraph with whitespace-only text node collapsed");
+
+    /* JSON: numbers at boundaries */
+    is_min(STRIP_JSON, "{\"a\":0}", "{\"a\":0}",
+           "json: zero value");
+    is_min(STRIP_JSON, "{\"a\":-1}", "{\"a\":-1}",
+           "json: negative number");
+    is_min(STRIP_JSON, "{\"a\":1.0}", "{\"a\":1.0}",
+           "json: decimal number");
+
+    /* SVG/XML: namespace handling */
+    is_min(STRIP_SVG, "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+           "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+           "svg: namespace attribute preserved");
+}
+
+
 int
 main(void)
 {
@@ -782,6 +838,7 @@ main(void)
     test_html_attrs();
     test_html_structure();
     test_svg_xml();
+    test_boundary_cases();
     test_dispatch();
 
     printf("1..%d\n", plan_n);

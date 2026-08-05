@@ -3,9 +3,21 @@ run_tests();
 
 __DATA__
 
-=== TEST 1: HTML whitespace + comment stripped
+=== TEST 1: HTML whitespace + comment stripped (conservative default: text-node run kept verbatim)
 --- config
     strip on;
+    return 200 "<html>\n  <body>\n    <!-- comment -->\n    <p>Hello   world</p>\n  </body>\n</html>";
+    default_type text/html;
+--- request
+GET /
+--- response_body: <html><body><p>Hello   world</p></body></html>
+--- no_error_log
+[error]
+
+=== TEST 1b: HTML whitespace + comment stripped, strip_aggressive on (old collapsed behaviour)
+--- config
+    strip on;
+    strip_aggressive on;
     return 200 "<html>\n  <body>\n    <!-- comment -->\n    <p>Hello   world</p>\n  </body>\n</html>";
     default_type text/html;
 --- request
@@ -220,9 +232,24 @@ GET /
 --- no_error_log
 [error]
 
-=== TEST 18: HTML multiple adjacent whitespace runs between words
+=== TEST 18: HTML multiple adjacent whitespace runs between words, conservative default (kept verbatim)
 --- config
     strip on;
+    return 200 "<p>one   two\n\nthree</p>";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp
+<p>one   two
+
+three</p>
+--- no_error_log
+[error]
+
+=== TEST 18b: HTML multiple adjacent whitespace runs between words, strip_aggressive on (old collapsed behaviour)
+--- config
+    strip on;
+    strip_aggressive on;
     return 200 "<p>one   two\n\nthree</p>";
     default_type text/html;
 --- request
@@ -254,9 +281,22 @@ GET /
 --- no_error_log
 [error]
 
-=== TEST 21: CSS zero-unit stripping (px, em, %)
+=== TEST 21: CSS zero-unit stripping, conservative default (unit kept)
 --- config
     strip_css on;
+    return 200 "div { margin: 0px; padding: 0em; top: 0%; font-size: 10px; }\n";
+    default_type text/css;
+--- request
+GET /
+--- response_body
+div{margin:0px;padding:0em;top:0%;font-size:10px}
+--- no_error_log
+[error]
+
+=== TEST 21b: CSS zero-unit stripping, strip_aggressive on (old stripped behaviour)
+--- config
+    strip_css on;
+    strip_aggressive on;
     return 200 "div { margin: 0px; padding: 0em; top: 0%; font-size: 10px; }\n";
     default_type text/css;
 --- request
@@ -353,9 +393,22 @@ GET /
 --- no_error_log
 [error]
 
-=== TEST 29: CSS zero-unit rem and vw also stripped
+=== TEST 29: CSS zero-unit rem and vw, conservative default (units kept)
 --- config
     strip_css on;
+    return 200 "p { gap: 0rem; width: 0vw; height: 0vh; }\n";
+    default_type text/css;
+--- request
+GET /
+--- response_body
+p{gap:0rem;width:0vw;height:0vh}
+--- no_error_log
+[error]
+
+=== TEST 29b: CSS zero-unit rem and vw, strip_aggressive on (old stripped behaviour)
+--- config
+    strip_css on;
+    strip_aggressive on;
     return 200 "p { gap: 0rem; width: 0vw; height: 0vh; }\n";
     default_type text/css;
 --- request

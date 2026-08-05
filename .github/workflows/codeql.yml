@@ -1,4 +1,4 @@
-# sync-sha: 176492138ca4fd362f5a32b4f200e6fca40e4e6db5d475f34306406ce9ee9306
+# sync-sha: 63a3750b0ad01dfa3dd58916a1277b7848f8a6fb4903e7fd57d36dbd92bcb6f5
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -94,6 +94,21 @@ jobs:
         run: |
           set -eu
 
+          # The CodeQL CLI is not on PATH in this step's shell -- only the
+          # init/analyze actions know where it lives (CODEQL_DIST, set by
+          # init). Resolve the binary explicitly instead of assuming `codeql`
+          # resolves; falling back to PATH covers a future runner image that
+          # does put it there.
+          if [ -n "${CODEQL_DIST:-}" ] && [ -x "${CODEQL_DIST}/codeql" ]; then
+            CODEQL_BIN="${CODEQL_DIST}/codeql"
+          elif command -v codeql >/dev/null 2>&1; then
+            CODEQL_BIN="$(command -v codeql)"
+          else
+            echo "ERROR: could not locate the codeql CLI (CODEQL_DIST='${CODEQL_DIST:-}', not on PATH)"
+            exit 1
+          fi
+          echo "codeql binary: $CODEQL_BIN"
+
           # Locate the traced DB. The init action's own db-location output is
           # the authority; fall back to searching RUNNER_TEMP only if that
           # output is unexpectedly empty (defensive, still verified below).
@@ -111,7 +126,7 @@ jobs:
 
           # Print the raw JSON during development/debugging so a future shape
           # change is visible in the log instead of silently swallowed.
-          INFO_JSON=$(codeql database info "$DB_DIR" --format json)
+          INFO_JSON=$("$CODEQL_BIN" database info "$DB_DIR" --format json)
           echo "codeql database info output:"
           echo "$INFO_JSON"
 

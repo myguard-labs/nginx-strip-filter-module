@@ -1,0 +1,25 @@
+#!/bin/bash
+# pre-commit hook that runs pre-commit against staged files only.
+#
+# This hook is wired via core.hooksPath, so git automatically finds it in
+# .githooks/ and runs it on `git commit`. It lints staged files before they
+# are committed, catching the cheap half of what CI catches.
+#
+# Requires pre-commit >= 4.6.1 to be installed. See .pre-commit-config.yaml
+# for the full gate specification and install instructions.
+#
+# To install for a fresh clone:
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+# Fail loudly if pre-commit is not installed — never silently pass.
+if ! command -v pre-commit >/dev/null 2>&1; then
+  echo "pre-commit hook: pre-commit not found on PATH" >&2
+  echo "pre-commit hook: install it with: pipx install pre-commit" >&2
+  exit 1
+fi
+
+# Run pre-commit against staged files only.
+# pre-commit natively lints only staged files when used without --all-files.
+exec pre-commit run --hook-stage pre-commit

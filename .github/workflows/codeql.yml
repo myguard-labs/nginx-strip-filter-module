@@ -1,4 +1,4 @@
-# sync-sha: b1b0117ed66b902854cd7b6e82ed597d526e6340f38a81eec05edf4dd9408a38
+# sync-sha: 81238358d93a5b4fd3974c346b50dcc82c5635bb346597ad0248dc2e7e70dca9
 name: CodeQL
 
 # CodeQL on the module TU only.
@@ -111,26 +111,28 @@ jobs:
           echo "DB dir listing (top level):"
           find "$DB_DIR" -maxdepth 1 -mindepth 1
 
-          # By the time `analyze` has finalized the database, raw trap files
-          # under trap/cpp are gone (finalize consolidates/cleans them up).
-          # What survives and is documented, stable database structure is
-          # src/ -- the source archive, containing one copy of every file
-          # that was actually extracted into the database. Its content is
-          # the ground truth for "how many translation units did this
-          # database really see" for a compiled-language DB.
-          SRC_DIR="$DB_DIR/src"
-          echo "Source archive dir: $SRC_DIR"
-          if [ ! -d "$SRC_DIR" ]; then
-            echo "ERROR: source archive dir does not exist ('$SRC_DIR')."
+          # Confirmed in CI: by the time `analyze` has finalized the database,
+          # raw trap files under trap/cpp are gone, and the source archive is
+          # a zip (src.zip), not a directory (src/). What's actually present
+          # at this point: codeql-database.yml, temp/, diagnostic/, db-cpp/
+          # (the QL dataset), results/, log/, src.zip. src.zip is the source
+          # archive -- one copy of every file CodeQL actually extracted --
+          # and is the ground truth for "how many translation units did this
+          # database really see" without extracting or depending on any
+          # `codeql` subcommand.
+          SRC_ZIP="$DB_DIR/src.zip"
+          echo "Source archive: $SRC_ZIP"
+          if [ ! -f "$SRC_ZIP" ]; then
+            echo "ERROR: source archive does not exist ('$SRC_ZIP')."
             exit 1
           fi
 
-          echo "source archive listing (find, first 20):"
-          find "$SRC_DIR" -type f | head -20
+          echo "source archive listing (first 20):"
+          unzip -l "$SRC_ZIP" | head -20
 
           # Count only compiled source files (translation units proper), not
           # headers -- headers get archived too but are not themselves TUs.
-          TU_COUNT=$(find "$SRC_DIR" -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \) | wc -l)
+          TU_COUNT=$(unzip -Z1 "$SRC_ZIP" | grep -Ec '\.(c|cc|cpp|cxx)$' || true)
 
           echo "CodeQL traced translation units: $TU_COUNT"
 

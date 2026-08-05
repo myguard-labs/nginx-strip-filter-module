@@ -1,4 +1,4 @@
-# sync-sha: d44fc27d699ac96635a8864a266fa3fb7717f3ecd2e08e898a9618eda4a2f166
+# sync-sha: 7f5a61019d343e968f627a5801d824bb2f32825d2a558df7ed6f4b15cbb1d7e0
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -11,8 +11,10 @@ name: CI Deep
 #
 # Jobs: build-flavors (nginx mainline/stable + angie) · fuzz (long) · memcheck
 #   soak · helgrind soak.
-#   memcheck AND helgrind run via ci/tools/soak.sh (USE_VALGRIND / USE_HELGRIND),
-#   which passes --suppressions=ci/tools/valgrind.supp and --error-exitcode=99.
+#   memcheck AND helgrind are invoked INLINE by their own jobs below (this repo
+#   has no ci/tools/soak.sh -- that is the skeleton reference's shape, not ours).
+#   Both pass --suppressions=ci/tools/valgrind.supp; helgrind additionally uses
+#   --error-exitcode=99, memcheck greps its own logs for a non-zero ERROR SUMMARY.
 #
 # build-flavors exists because build-test.yml (the fast PR gate) only builds
 # ONE pinned nginx version -- the module claims angie support and tracks both

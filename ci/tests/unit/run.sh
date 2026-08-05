@@ -47,13 +47,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 BIN="$DIR/test_scan"
-BIN2="$DIR/flush_copy_bound"
 
 if [ "${1:-}" = "clean" ]; then
     # *.o/*.gcda/*.gcno too: this script produces them and leaving them behind
     # meant `clean` did not give you a clean tree -- switching $CC (say to
     # `gcc -m32`) then relinked stale objects from the previous toolchain.
-    rm -f "$BIN" "$BIN2" "$DIR"/*.o "$DIR"/*.gcda "$DIR"/*.gcno
+    rm -f "$BIN" "$DIR"/*.o "$DIR"/*.gcda "$DIR"/*.gcno
     echo "unit test binary removed"
     exit 0
 fi
@@ -80,15 +79,5 @@ $CC "${CFLAGS[@]}" -I"$ROOT/src" -c "$ROOT/src/strip_core.c" \
 # shellcheck disable=SC2086
 $CC "${LINK_EXTRA[@]}" -o "$BIN" "$DIR/test_scan.o" "$DIR/strip_core.o"
 
-# flush_copy_bound: an ngx-independent extraction of the ngx_http_strip_flush()
-# copy-loop arithmetic (see the file header for why it cannot link the real
-# nginx module). Standalone, no strip_core dependency.
-echo "==> Building $BIN2 with ${CC}"
-# shellcheck disable=SC2086
-$CC "${CFLAGS[@]}" "${LINK_EXTRA[@]}" -o "$BIN2" "$DIR/flush_copy_bound.c"
-
 echo "==> Running"
 "$BIN"
-
-echo "==> Running $BIN2"
-"$BIN2"

@@ -153,6 +153,7 @@ Only `ci.yml` has a `pull_request` trigger. The PR-time workflows below are
 
 | Workflow | Trigger | Gates |
 |---|---|---|
+| `ci.yml` | PR (the only `pull_request` entry point) | no gates of its own — lanes and dispatches every PR-time member below |
 | `build-test.yml` | PR (via `ci.yml`) | build, Test::Nginx, ASan+UBSan, `unit-core` job (gcc+clang unit run of `ci/tests/unit/test_scan.c` against `src/strip_core.c` standalone, plus an ASan/UBSan unit run and an informational coverage report), `ci/tools/sync-stamp.sh --check` |
 | `security-scanners.yml` | PR (via `ci.yml`) | flawfinder, clang-tidy, semgrep over the module sources |
 | `fuzzing.yml` | PR (via `ci.yml`) | 20s/target fast fuzz regression across all 6 strip kinds (html/css/js/json/svg/xml) |
@@ -162,9 +163,8 @@ Only `ci.yml` has a `pull_request` trigger. The PR-time workflows below are
 | `ci-deep.yml` | monthly + dispatch | exhaustive dynamic analysis — long fuzz, full memcheck + helgrind soak, Discord failure notify |
 | `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, commits an update to main if anything moved |
 
-`ci.yml` itself is the PR-time orchestrator (no gates of its own beyond lane
-dispatch). There is no `lint.yml` in this module yet — `ci/linter/` has not
-been ported from the reference skeleton, so no Lint row exists here.
+There is no `lint.yml` in this module yet — `ci/linter/` has not been ported
+from the reference skeleton, so no Lint row exists here.
 
 ## Installing from deb.myguard.nl
 

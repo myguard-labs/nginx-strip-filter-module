@@ -5,7 +5,10 @@
 # run-all.sh, wired into CI on a hosted runner. No ci/linter/ tree exists in
 # this repo or in the referenced skeleton to port verbatim, so this wraps the
 # linters .github/workflows/security-scanners.yml and build-test.yml already
-# gate PRs on, at the SAME thresholds -- mirrored, not invented:
+# gate PRs on, mirrored rather than invented. Thresholds match CI except where
+# noted below: semgrep is deliberately STRICTER here than in CI, which runs it
+# report-only. Do not "fix" that by loosening this script or by dropping the
+# `|| true` in the workflows -- local-strict/CI-advisory is the intended shape.
 #
 #   flawfinder      fails at level >=4        (security-scanners.yml "flawfinder")
 #   semgrep         gates locally at WARNING; report-only in CI (security-scanners.yml, ci-deep.yml)

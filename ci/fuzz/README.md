@@ -120,3 +120,32 @@ range. They do **not** reach:
 None of the above are wired up as fuzz targets in this change; they are
 recorded here as the acknowledged gap per the adoption card's "if no real
 seam is reachable, record the gap" instruction.
+
+## Verification pass (2026-08-05)
+
+Re-audited the surface map above; no new seam found. `strip_minify()` is the
+sole entry point into `src/strip_core.c` — every `static` helper in that file
+(json/css/js/html/svg tokenizers, `html_copy_tag`, raw-text-element copiers)
+is reachable only through the six `FUZZ_KIND` dispatch targets already built.
+`ngx_http_strip_select()` takes `ngx_http_request_t *r` directly — no seam
+callable without inventing nginx scaffolding, so it stays an acknowledged gap,
+not a new target (see "Uncovered surfaces" above; unchanged from #28).
+
+Checks run:
+
+- Corpus/dictionary counts still match the tables above exactly (tracked
+  seeds: css 4, html 5, js 3, json 3, svg 3, xml 3; dict tokens: css 19,
+  html 24, js 18, json 14, svg 18, xml 15 — `wc -l ci/fuzz/fuzz.dict.*`).
+  Not stale, not touched.
+- Regression replay: `issues.md`'s CRITICAL unterminated-quoted-attr bug
+  (`<x a="` → synthesized `<x a=""`, output > input, heap overflow) replayed
+  as a single-input run (`./ci/fuzz/fuzz_strip_html -runs=1 <repro>`) against
+  the current build — no crash, `assert(out<=size)` holds. Fix (tracked since
+  2026-06-22) still in effect; harness still shaped to catch this class if it
+  regresses.
+- Short campaign, ASan+UBSan build, each target `-max_total_time=15..30`,
+  tracked corpus + matching dict as seed: html 2.53M execs, css 1.58M, js
+  2.54M, json 8.44M, svg 1.80M, xml 1.76M — 0 crashes, 0 new artifacts in
+  `-artifact_prefix`. libFuzzer wrote additional content-addressed corpus
+  entries into `corpus_*/` during these runs (expected coverage-guided
+  exploration, gitignored per the pattern above) — none committed.

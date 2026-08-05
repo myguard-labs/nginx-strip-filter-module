@@ -1,4 +1,4 @@
-# sync-sha: dabd380d3c2835c7effdd15c6342f69919e4a3c84c9e791ed713515caadbc824
+# sync-sha: f36c75f61fc5e96e9f888e0364fff094f824f302feff879558c34abcab30278f
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -210,6 +210,8 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Install clang + libFuzzer
         run: |
@@ -292,6 +294,8 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # Without this, env.NGINX_VERSION is EMPTY in every later step: the paths
       # below resolve to .build/nginx-/objs/nginx, Test::Nginx finds no server
@@ -404,6 +408,8 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # Without this, env.NGINX_VERSION is EMPTY in every later step: the paths
       # below resolve to .build/nginx-/objs/nginx, Test::Nginx finds no server
@@ -507,6 +513,8 @@ jobs:
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Load version pins
         run: bash .github/scripts/load-versions.sh
@@ -520,11 +528,10 @@ jobs:
           # user pip install with --break-system-packages if pipx is unavailable.
           if command -v pipx >/dev/null; then
             pipx install --quiet semgrep
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           else
             pip3 install --quiet --user --break-system-packages semgrep
-            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # Keyed on version+sha256, matching every other tarball cache in this
       # repo: a re-pinned sha at the same version string must invalidate.

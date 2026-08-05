@@ -36,6 +36,18 @@ if ! command -v semgrep >/dev/null 2>&1; then
   fi
 fi
 
+# ruff lints ci/tools/*.py -- pinned (unlike semgrep's rolling install above)
+# because this is a fresh addition with no existing unpinned precedent to
+# match; a new gate should not start unreproducible.
+if ! command -v ruff >/dev/null 2>&1; then
+  echo "install.sh: installing ruff via pipx" >&2
+  if command -v pipx >/dev/null 2>&1; then
+    pipx install --quiet "ruff==0.16.1"
+  else
+    pip3 install --quiet --user --break-system-packages "ruff==0.16.1"
+  fi
+fi
+
 # actionlint has no apt package; same version-pinned, checksum-verified
 # fetch build-test.yml's "Lint workflows" step uses, so local and CI run the
 # identical binary.

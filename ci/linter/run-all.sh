@@ -50,6 +50,7 @@ command -v flawfinder >/dev/null 2>&1 || missing+=(flawfinder)
 command -v semgrep >/dev/null 2>&1 || missing+=(semgrep)
 command -v shellcheck >/dev/null 2>&1 || missing+=(shellcheck)
 command -v actionlint >/dev/null 2>&1 || missing+=(actionlint)
+command -v ruff >/dev/null 2>&1 || missing+=(ruff)
 
 if [ "${#missing[@]}" -gt 0 ]; then
   echo "run-all.sh: missing required tool(s): ${missing[*]}" >&2
@@ -69,15 +70,35 @@ if flawfinder --minlevel=4 --quiet src/*.c 2>/dev/null | grep -Eq 'Hits = [1-9]'
 fi
 
 echo "== semgrep (gate on >=WARNING) =="
-if ! semgrep scan --config p/c --config p/security-audit \
-     --severity=WARNING --severity=ERROR --error \
-     src/*.c; then
+# semgrep scan exit codes: 0 clean, 1 findings (what --error asks for), 2
+# fatal/tool error, 3 invalid target. Only 1 is a real lint finding -- a 2
+# means semgrep itself failed (bad config, missing ruleset fetch, etc) and
+# must not silently fold into the same "status=1" bucket as a real finding.
+semgrep_rc=0
+semgrep scan --config p/c --config p/security-audit \
+  --severity=WARNING --severity=ERROR --error \
+  src/*.c || semgrep_rc=$?
+if [ "$semgrep_rc" -eq 1 ]; then
   echo "run-all.sh: semgrep finding at >=WARNING" >&2
   status=1
+elif [ "$semgrep_rc" -ne 0 ]; then
+  echo "run-all.sh: semgrep tool error (exit $semgrep_rc), not a lint finding" >&2
+  exit 2
 fi
 
 echo "== shellcheck (gate on >=warning) =="
-mapfile -t sh_files < <(find ci .github -type f \( -name '*.sh' -o -name '*.bash' \) 2>/dev/null | sort)
+# git ls-files, not find: find only ever saw ci/ and .github/, so a shell
+# script at the repo root (.githooks/pre-commit) or with no .sh/.bash
+# extension was never read -- the gate reported clean for files it never
+# checked. Union of *.sh/*.bash (extension-based) with a shebang grep over
+# every OTHER tracked file (extensionless scripts) catches both shapes.
+mapfile -t sh_files < <(
+  {
+    git ls-files -z '*.sh' '*.bash' | tr '\0' '\n'
+    git grep -lIz -E '^#!.*\b(ba)?sh\b' -- ':!*.sh' ':!*.bash' \
+      | tr '\0' '\n'
+  } | sort -u
+)
 if [ "${#sh_files[@]}" -gt 0 ]; then
   if ! shellcheck -S warning "${sh_files[@]}"; then
     echo "run-all.sh: shellcheck finding at >=warning" >&2
@@ -100,7 +121,20 @@ if ! bash ci/linter/lint-ci-ports.sh; then
   status=1
 fi
 
+echo "== ruff (Python lint, gate on default rule set) =="
+mapfile -t py_files < <(git ls-files -z '*.py' | tr '\0' '\n' | sort)
+if [ "${#py_files[@]}" -gt 0 ]; then
+  if ! ruff check "${py_files[@]}"; then
+    echo "run-all.sh: ruff finding" >&2
+    status=1
+  fi
+else
+  echo "run-all.sh: no Python files found -- unexpected, treating as a gate failure" >&2
+  status=1
+fi
+
 echo "== clang-tidy (cert-*, security.*) =="
+prereq_missing=0
 if [ -z "${NGINX_SRC_TREE:-}" ]; then
   echo "run-all.sh: NGINX_SRC_TREE not set -- clang-tidy needs a configured nginx" >&2
   echo "run-all.sh: source tree (ngx_auto_config.h etc), which only exists after" >&2
@@ -108,20 +142,22 @@ if [ -z "${NGINX_SRC_TREE:-}" ]; then
   echo "run-all.sh: (see .pre-commit-config.yaml and the header of this script)." >&2
   echo "run-all.sh: skipping is exit 2, never exit 0 -- run CI, or export" >&2
   echo "run-all.sh: NGINX_SRC_TREE to a configured tree to run this check locally." >&2
-  exit 2
+  prereq_missing=1
 elif ! command -v clang-tidy >/dev/null 2>&1; then
   echo "run-all.sh: NGINX_SRC_TREE is set but clang-tidy is not installed" >&2
-  exit 2
+  prereq_missing=1
 else
   N="$NGINX_SRC_TREE"
-  INCLUDES="-I$N/src/core -I$N/src/event -I$N/src/event/modules -I$N/src/event/quic \
-    -I$N/src/os/unix -I$N/objs -I$N/src/http -I$N/src/http/modules -I$N/src/http/v2 \
-    -I$(pwd) -I/usr/include"
-  for f in src/strip_core.c src/ngx_http_strip_filter_module.c; do
-    # shellcheck disable=SC2086
+  includes=(
+    "-I$N/src/core" "-I$N/src/event" "-I$N/src/event/modules"
+    "-I$N/src/event/quic" "-I$N/src/os/unix" "-I$N/objs"
+    "-I$N/src/http" "-I$N/src/http/modules" "-I$N/src/http/v2"
+    "-I$(pwd)" "-I/usr/include"
+  )
+  for f in src/*.c; do
     if ! clang-tidy "$f" \
       --checks='-*,cert-*,clang-analyzer-security.*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling' \
-      --warnings-as-errors='*' -- $INCLUDES; then
+      --warnings-as-errors='*' -- "${includes[@]}"; then
       echo "run-all.sh: clang-tidy finding in $f" >&2
       status=1
     fi
@@ -129,6 +165,10 @@ else
 fi
 
 if [ "$status" -eq 0 ]; then
+  if [ "$prereq_missing" -eq 1 ]; then
+    echo "run-all.sh: no findings, but clang-tidy prerequisite missing" >&2
+    exit 2
+  fi
   echo "run-all.sh: clean"
 else
   echo "run-all.sh: findings present" >&2

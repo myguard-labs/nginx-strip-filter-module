@@ -121,6 +121,12 @@ if ! bash ci/linter/lint-ci-ports.sh; then
   status=1
 fi
 
+echo "== docs-drift (README '## CI' table <-> .github/workflows/) =="
+if ! bash ci/linter/lint-docs-drift.sh; then
+  echo "run-all.sh: docs-drift finding" >&2
+  status=1
+fi
+
 echo "== ruff (Python lint, gate on default rule set) =="
 mapfile -t py_files < <(git ls-files -z '*.py' | tr '\0' '\n' | sort)
 if [ "${#py_files[@]}" -gt 0 ]; then

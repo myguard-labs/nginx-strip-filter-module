@@ -1,4 +1,4 @@
-# sync-sha: eaeb85536df907f8392b5a5334cf826e54442400abf1548f1d91af98457a7929
+# sync-sha: d4ddf1cdd1e1b55199f41315a3273a6c1e9fcd2c88de4bc1fe139be7d80101a6
 name: CI
 
 # Single entry point for the PR suite.
@@ -15,11 +15,24 @@ name: CI
 # would silence it completely. The triggers come off in the next commit, once
 # the double-run has been observed on a real PR.
 #
-# NOT laned yet. The reference arranges its members into lanes sized against its
-# own measured job durations and its build host's ephemeral slot count; those
-# numbers are the reference's, not this repo's. Lanes get built here after this
-# repo's own job durations are measured. Until then every member starts
-# immediately, which is the current behaviour and no worse than it.
+# LANED. Self-hosted slot ceiling is 4 (builder02-runner-01..04, org-registered).
+# Budget = longest job = Valgrind at 769s (measured run 31008062208, see
+# CI_PERFORMANCE.md). Lane map:
+#
+#   Lane A -- valgrind: UNCHAINED (no needs:). 769s, this is the budget-setter;
+#     chaining it would exceed the budget.
+#   Lane B -- build-test (unchained, fans out to 3 concurrent self-hosted jobs:
+#     Validation 24s, Build 30s, unit-core 16s; then Test::Nginx 45s needs:
+#     build) -> fuzzing (needs: build-test, 149s) -> asan (needs: fuzzing, 65s).
+#     Lane total ~= 313s.
+#   Lane C -- security-scanners (needs: build-test, 76s + Linter 35s).
+#     Lane total ~= 111s.
+#   Off-lane -- codeql: runs on ubuntu-latest (GitHub-hosted). Not laned, no
+#     needs: -- hosted jobs are not laned.
+#
+# Peak self-hosted demand = Lane A (1) + Lane B's build-test fan-out (3) = 4,
+# exactly the ceiling. Fullest-lane headroom = 769 - 313 = 456s. The `changes`
+# job below adds a brief 5th self-hosted slot; see its comment.
 #
 # asan.yml IS a PR-lane member, called unconditionally (no path-filter gate).
 # The reference gates it behind a changed-files filter because its 149s
@@ -52,23 +65,37 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Lane map sanity
+    runs-on: ["self-hosted", "builder02", "lxc"]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Assert documented lane map matches needs: graph"
+        run: python3 ci/tools/check-lane-map.py .github/workflows/ci.yml
+
   build-test:
     name: Build&Test
     permissions:
       contents: read
     uses: ./.github/workflows/build-test.yml
 
-  asan:
-    name: A/UBSan
-    permissions:
-      contents: read
-    uses: ./.github/workflows/asan.yml
-
   fuzzing:
     name: Fuzzing
+    needs: build-test
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
     uses: ./.github/workflows/fuzzing.yml
+
+  asan:
+    name: A/UBSan
+    needs: fuzzing
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/asan.yml
 
   valgrind:
     name: Valgrind
@@ -78,6 +105,8 @@ jobs:
 
   security-scanners:
     name: Security scanners
+    needs: build-test
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
     uses: ./.github/workflows/security-scanners.yml

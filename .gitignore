@@ -6,10 +6,12 @@ objs/
 ci/fuzz/fuzz_strip_*
 ci/fuzz/crash-*
 ci/fuzz/corpus_*-min/
-# libFuzzer-generated corpus entries are content-addressed by SHA1 hash and
-# have no extension; hand-authored seeds under corpus_*/ always carry one
-# (basic.css, nested.json, ...) so this pattern never touches them.
-ci/fuzz/corpus_*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
+# libFuzzer-generated corpus entries are content-addressed: exactly 40
+# lowercase hex characters (SHA1), no extension. Hand-authored seeds under
+# corpus_*/ always carry an extension (basic.css, nested.json, ...), so this
+# exact-length, no-suffix pattern never touches them (unlike a prefix glob,
+# which would also match e.g. deadbeef.css).
+ci/fuzz/corpus_*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]
 ci/t/servroot/
 ci/tests/unit/test_scan
 *.tar.gz

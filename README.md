@@ -195,7 +195,7 @@ never drift apart — see [ci/linter/README.md](ci/linter/README.md).
 | `codeql.yml` | PR (via `ci.yml`) + monthly | CodeQL |
 | `valgrind.yml` | weekly + dispatch (+ `workflow_call`) | Test::Nginx suite once under Valgrind memcheck (lite soak) — **deliberately removed from the PR lane** (was the 769s budget-setter; PR-lane wall-clock went 12m52s → 5m59s); per-PR memory-safety coverage is `asan.yml`. See `memory/labs/nginx-strip-filter-module/skeleton-findings.md` § F-VG. |
 | `ci-deep.yml` | monthly + dispatch | exhaustive dynamic analysis — long fuzz, full memcheck + helgrind soak, Discord failure notify |
-| `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, commits an update to main if anything moved |
+| `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, opens a PR against master if anything moved |
 
 There is no `lint.yml` in this module yet — the reference skeleton's fuller
 `ci/linter/` (perlcritic, yamllint, zizmor, spelling, its own `lint.yml`

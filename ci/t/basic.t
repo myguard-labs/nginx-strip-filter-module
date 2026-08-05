@@ -757,3 +757,38 @@ GET /
 --- response_body chomp: .a{background:url(x.png)}
 --- no_error_log
 [error]
+
+
+=== TEST 62: AUD-2026-07-25-05 — application/json-seq is NOT selected as JSON (token boundary)
+--- config
+    strip_json on;
+    return 200 '{"a": 1}\n{"b": 2}\n';
+    default_type application/json-seq;
+--- request
+GET /
+--- response_body eval
+qq({"a": 1}\n{"b": 2}\n)
+--- no_error_log
+[error]
+
+=== TEST 63: AUD-2026-07-25-05 — plain application/json still minified (positive control)
+--- config
+    strip_json on;
+    return 200 '{"a": 1, "b": 2}';
+    default_type application/json;
+--- request
+GET /
+--- response_body: {"a":1,"b":2}
+--- no_error_log
+[error]
+
+=== TEST 64: AUD-2026-07-25-05 — application/json with charset param still minified (positive control)
+--- config
+    strip_json on;
+    return 200 '{"a": 1, "b": 2}';
+    default_type "application/json; charset=utf-8";
+--- request
+GET /
+--- response_body: {"a":1,"b":2}
+--- no_error_log
+[error]

@@ -8,7 +8,7 @@
 # gate PRs on, at the SAME thresholds -- mirrored, not invented:
 #
 #   flawfinder      fails at level >=4        (security-scanners.yml "flawfinder")
-#   semgrep         fails at severity WARNING (security-scanners.yml "semgrep")
+#   semgrep         gates locally at WARNING; report-only in CI (security-scanners.yml, ci-deep.yml)
 #   the SC-lint     fails at severity warning (mirrors .pre-commit-config.yaml floor)
 #   actionlint      default severity          (build-test.yml "Lint workflows")
 #

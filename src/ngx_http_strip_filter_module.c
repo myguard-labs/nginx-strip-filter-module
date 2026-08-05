@@ -20,6 +20,7 @@
  *   strip_json     on|off;      minify application/json responses
  *   strip_svg      on|off;      minify image/svg+xml responses
  *   strip_xml      on|off;      minify XML responses (RSS/Atom/sitemap, +xml)
+ *   strip_aggressive on|off;    enable lossy transforms (default off = conservative)
  *   strip_min_size <size>;      skip bodies smaller than this (default 0)
  *   strip_max_size <size>;      skip bodies larger than this (default 10m)
  *   strip_types    <mime> ...;  extra HTML-treated MIME types
@@ -39,6 +40,7 @@ typedef struct {
     ngx_flag_t   json;         /* strip_json              */
     ngx_flag_t   svg;          /* strip_svg               */
     ngx_flag_t   xml;          /* strip_xml               */
+    ngx_flag_t   aggressive;   /* strip_aggressive        */
     size_t       min_size;     /* strip_min_size          */
     size_t       max_size;     /* strip_max_size          */
     ngx_hash_t   types;        /* extra HTML MIME types   */
@@ -118,6 +120,13 @@ static ngx_command_t  ngx_http_strip_filter_commands[] = {
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_strip_loc_conf_t, xml),
+      NULL },
+
+    { ngx_string("strip_aggressive"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_strip_loc_conf_t, aggressive),
       NULL },
 
     { ngx_string("strip_min_size"),
@@ -433,10 +442,14 @@ ngx_http_strip_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 static ngx_int_t
 ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
 {
-    ngx_chain_t  *cl, *out;
-    ngx_buf_t    *b;
-    u_char       *src, *p, *dst;
-    size_t        outlen, copied;
+    ngx_chain_t                *cl, *out;
+    ngx_buf_t                  *b;
+    ngx_http_strip_loc_conf_t  *slcf;
+    u_char                     *src, *p, *dst;
+    size_t                      outlen, copied;
+    unsigned                    flags;
+
+    slcf = ngx_http_get_module_loc_conf(r, ngx_http_strip_filter_module);
 
     src = ngx_pnalloc(r->pool, ctx->len ? ctx->len : 1);
     if (src == NULL) {
@@ -481,7 +494,8 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
         return NGX_ERROR;
     }
 
-    outlen = strip_minify(ctx->kind, src, copied, dst);
+    flags = slcf->aggressive ? STRIP_F_AGGRESSIVE : 0;
+    outlen = strip_minify(ctx->kind, src, copied, dst, flags);
 
     b = ngx_calloc_buf(r->pool);
     if (b == NULL) {
@@ -526,6 +540,7 @@ ngx_http_strip_create_loc_conf(ngx_conf_t *cf)
     slcf->json     = NGX_CONF_UNSET;
     slcf->svg      = NGX_CONF_UNSET;
     slcf->xml      = NGX_CONF_UNSET;
+    slcf->aggressive = NGX_CONF_UNSET;
     slcf->min_size = NGX_CONF_UNSET_SIZE;
     slcf->max_size = NGX_CONF_UNSET_SIZE;
 
@@ -545,6 +560,7 @@ ngx_http_strip_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->json, prev->json, 0);
     ngx_conf_merge_value(conf->svg, prev->svg, 0);
     ngx_conf_merge_value(conf->xml, prev->xml, 0);
+    ngx_conf_merge_value(conf->aggressive, prev->aggressive, 0);
     ngx_conf_merge_size_value(conf->min_size, prev->min_size, 0);
     ngx_conf_merge_size_value(conf->max_size, prev->max_size,
                               10 * 1024 * 1024);

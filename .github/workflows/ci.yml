@@ -1,4 +1,4 @@
-# sync-sha: 1a5b73a884f5a41f85cfb63301c31f0e595ed91babca0ff2297f79b6676a7979
+# sync-sha: 608d154000ea7580523a3d4a53ff7e38b80cb3d6e1bc4bedca1fed770abf03a6
 name: CI
 
 # Single entry point for the PR suite.
@@ -8,16 +8,16 @@ name: CI
 # is what makes lane arrangement possible at all: a caller can order its members
 # with `needs:`, independent workflows cannot be ordered by anything.
 #
-# INTERMEDIATE STATE: the members still carry their own pull_request: triggers,
-# so every member currently runs TWICE on a PR -- once standalone, once called.
-# That double-run is deliberate and is the proof that this call graph is wired:
-# a member that runs only once was never called, and removing its own trigger
-# would silence it completely. The triggers come off in the next commit, once
-# the double-run has been observed on a real PR.
+# All members (asan.yml, fuzzing.yml, security-scanners.yml, codeql.yml,
+# build-test.yml, valgrind.yml) are workflow_call:-only; they run exactly once
+# per PR, via this orchestrator, with no independent pull_request: trigger.
 #
 # LANED. Self-hosted slot ceiling is 4 (builder02-runner-01..04, org-registered).
-# Budget = longest job = Valgrind at 769s (measured run 31008062208, see
-# CI_PERFORMANCE.md). Lane map:
+# Budget = longest job = Valgrind at 769s (measured run 31008062208, 2026-08-05).
+# Reproduce with:
+#   gh api repos/myguard-labs/nginx-strip-filter-module/actions/runs/31008062208/jobs \
+#     --jq '.jobs[] | "\(.name)\t\(.started_at)\t\(.completed_at)"'
+# See also CI_PERFORMANCE.md. Lane map:
 #
 #   Lane A -- valgrind: UNCHAINED (no needs:). 769s, this is the budget-setter;
 #     chaining it would exceed the budget.

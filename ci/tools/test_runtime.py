@@ -406,10 +406,14 @@ def test_seam_clean_body_split_across_buffers(srv: Server) -> None:
 # per-request expected-body check does.
 _CONCURRENT_CASES = [
     ("text/css", b"a{color:  red; }", b"a{color:red}"),
-    ("text/css", b".b{margin:  0px; }", b".b{margin:0}"),
+    ("text/css", b".b{margin:  0px; }", b".b{margin:0px}"),
     ("application/json", b'{"a": 1, "b": 2}', b'{"a":1,"b":2}'),
     ("application/json", b'{"x": [1, 2, 3]}', b'{"x":[1,2,3]}'),
-    ("text/html", b"<p>Hello   world</p>", b"<p>Hello world</p>"),
+    # Text-node whitespace collapse is `strip_aggressive`-only, so a case built
+    # on it would be an identity transform under the default config and would
+    # still "pass" with the filter bypassed entirely. Use inter-tag whitespace,
+    # which is dropped in BOTH modes, so the expectation stays a real oracle.
+    ("text/html", b"<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>", b"<ul><li>a</li><li>b</li></ul>"),
     ("text/html", b"<div>  <span>x</span>  </div>", b"<div><span>x</span></div>"),
 ]
 
@@ -513,8 +517,13 @@ class ReloadUpstream:
     during the reload window has one known-correct expected minified form.
     """
 
-    RAW = b"<p>Hello   world</p>  <!-- x -->"
-    WANT = b"<p>Hello world</p>"
+    # Both transforms used here (comment removal, inter-tag whitespace) fire in
+    # BOTH modes, so WANT differs from RAW regardless of `strip_aggressive`.
+    # Text-node collapse is deliberately avoided: it is aggressive-only, so it
+    # would make WANT == RAW under the default config and the reload window
+    # would no longer prove the filter stayed attached across the reload.
+    RAW = b"<div>  <p>Hello</p>  <!-- x -->  </div>"
+    WANT = b"<div><p>Hello</p></div>"
 
     def __init__(self, port: int) -> None:
         self.port = port

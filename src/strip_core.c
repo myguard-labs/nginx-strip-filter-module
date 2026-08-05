@@ -196,10 +196,6 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst,
     size_t o = 0;
     int pending_space = 0; /* a collapsed whitespace run is buffered */
 
-    /* Pure plumbing PR: flags is threaded through but not yet branched on.
-     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
-    (void) flags;
-
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
 
@@ -350,8 +346,14 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst,
 
         /* 0<unit> → 0: only when the '0' is a standalone numeric zero.
          * Check that the char before the '0' is not a digit (to avoid
-         * trimming units from e.g. 10px, 20em). */
-        if (c == '0') {
+         * trimming units from e.g. 10px, 20em).
+         *
+         * AUD-01 (confirmed lossy): this strips the unit even inside a media
+         * query, e.g. `@media (min-width:0px)` -> `(min-width:0)`, which is
+         * INVALID syntax there (a bare zero is only unit-less in an ordinary
+         * property value). Gate behind STRIP_F_AGGRESSIVE; conservative mode
+         * keeps the unit. */
+        if (c == '0' && (flags & STRIP_F_AGGRESSIVE)) {
             unsigned char prev2 = (o >= 2) ? dst[o - 2] : 0;
             if ((prev2 < '0' || prev2 > '9') && prev2 != '.') {
                 size_t ni = css_skip_zero_unit(src, len, i + 1);
@@ -495,10 +497,6 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst,
     int pending_nl = 0;    /* a collapsed run contained a newline */
     int pending_sp = 0;    /* a collapsed run contained spaces only */
 
-    /* Pure plumbing PR: flags is threaded through but not yet branched on.
-     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
-    (void) flags;
-
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
 
@@ -598,6 +596,16 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst,
                        && (sc_is_word(c) || c == '(' || c == '['))
             {
                 /* keep a single separating space between adjacent words */
+                dst[o++] = ' ';
+            } else if (!(flags & STRIP_F_AGGRESSIVE) && o > 0 && prev == c
+                       && (c == '+' || c == '-'))
+            {
+                /* AUD-02 (confirmed lossy): dropping the space between two
+                 * identical operator chars fuses distinct tokens into a
+                 * different one, e.g. `a + +b` -> `a++b` (unary plus becomes
+                 * increment) or `a - -b` -> `a--b`. Conservative mode keeps
+                 * the space for exactly this identical-char case; a general
+                 * tokenizer is out of scope here. */
                 dst[o++] = ' ';
             }
             pending_nl = 0;
@@ -845,10 +853,7 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
     size_t i;
     size_t o = 0;
     int pending_space = 0;
-
-    /* Pure plumbing PR: flags is threaded through but not yet branched on.
-     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
-    (void) flags;
+    size_t pending_start = 0; /* src index where the buffered run began */
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
@@ -865,13 +870,24 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
             }
             i += 2; /* lands on '>', loop ++ steps past */
             pending_space = 1;
+            pending_start = i + 1; /* no literal run: force collapse */
             continue;
         }
 
         if (c == '<') {
-            /* flush at most one space if it was meaningful text before a tag */
+            /* flush the buffered run if it was meaningful text before a tag.
+             * AUD-04: collapse under AGGRESSIVE (old behaviour) or when the
+             * run is comment-synthesized (no literal bytes to replay);
+             * otherwise copy it verbatim. */
             if (pending_space && o > 0 && dst[o - 1] != '>') {
-                dst[o++] = ' ';
+                if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
+                    dst[o++] = ' ';
+                } else {
+                    size_t k;
+                    for (k = pending_start; k < i; k++) {
+                        dst[o++] = src[k];
+                    }
+                }
             }
             pending_space = 0;
 
@@ -915,20 +931,48 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
         }
 
         if (sc_is_space(c)) {
+            if (!pending_space) {
+                pending_start = i; /* first space byte of this run */
+            }
             pending_space = 1;
             continue;
         }
 
         if (pending_space) {
-            /* Collapse the run to a single space. Whitespace immediately after
-             * a tag close ('>') is only insignificant when the next thing is
-             * another tag ('<') — i.e. pure inter-tag whitespace. When text
-             * follows ("</span> world"), the space is meaningful and must be
-             * kept, otherwise inline elements get glued to the next word. */
-            if (o > 0 && !(dst[o - 1] == '>' && c == '<')) {
-                dst[o++] = ' ';
+            /* Pure inter-tag whitespace ('>' … '<') is never a text node —
+             * it renders as nothing regardless of surrounding CSS — so it is
+             * always safe to drop in full, in both modes. A run that started
+             * after a stripped comment has no literal source bytes to replay
+             * (pending_start == i means the run is comment-synthesized), so
+             * it always gets the single-space collapse rather than a verbatim
+             * copy of nothing. */
+            if (o > 0 && dst[o - 1] == '>' && c == '<') {
+                pending_space = 0;
+            } else if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
+                /* Collapse to a single space (old behaviour; also used for
+                 * the comment-synthesized case in both modes, since there is
+                 * no literal whitespace run to preserve verbatim there). */
+                if (o > 0) {
+                    dst[o++] = ' ';
+                }
+                pending_space = 0;
+            } else {
+                /*
+                 * AUD-04 (confirmed lossy): the collapse above assumes
+                 * ordinary flow layout, where runs of whitespace are
+                 * insignificant. HTML does not encode `white-space: pre`/
+                 * `pre-wrap` in the markup itself — that is a CSS property
+                 * this byte-level filter cannot see — so collapsing
+                 * text-node whitespace can silently change rendered output
+                 * for elements styled that way. Conservative mode copies the
+                 * whole buffered run verbatim instead of collapsing it.
+                 */
+                size_t k;
+                for (k = pending_start; k < i; k++) {
+                    dst[o++] = src[k];
+                }
+                pending_space = 0;
             }
-            pending_space = 0;
         }
 
         dst[o++] = c;
@@ -952,17 +996,25 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
     size_t i;
     size_t o = 0;
     int pending_space = 0;
-
-    /* Pure plumbing PR: flags is threaded through but not yet branched on.
-     * PR 2 gates the lossy transforms behind STRIP_F_AGGRESSIVE. */
-    (void) flags;
+    size_t pending_start = 0; /* src index where the buffered run began */
 
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
 
         if (c == '<') {
             if (pending_space && o > 0 && dst[o - 1] != '>') {
-                dst[o++] = ' ';
+                /* AUD-03: text-before-tag whitespace is a text node too.
+                 * Collapse under AGGRESSIVE (old behaviour) or when the run
+                 * is comment-synthesized (no literal bytes to replay);
+                 * otherwise copy the run verbatim. */
+                if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
+                    dst[o++] = ' ';
+                } else {
+                    size_t k;
+                    for (k = pending_start; k < i; k++) {
+                        dst[o++] = src[k];
+                    }
+                }
             }
             pending_space = 0;
 
@@ -979,6 +1031,7 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
                 }
                 i += 2; /* lands on '>', loop ++ steps past */
                 pending_space = 1;
+                pending_start = i + 1; /* no literal run: force collapse */
                 continue;
             }
 
@@ -1012,18 +1065,46 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
         }
 
         if (sc_is_space(c)) {
+            if (!pending_space) {
+                pending_start = i;
+            }
             pending_space = 1;
             continue;
         }
 
         if (pending_space) {
-            /* Same rule as HTML: only inter-tag whitespace ('>' … '<') is
-             * safe to drop. XML/SVG text nodes are whitespace-sensitive, so a
-             * space between '>' and text content is preserved. */
-            if (o > 0 && !(dst[o - 1] == '>' && c == '<')) {
-                dst[o++] = ' ';
+            /*
+             * Only pure inter-tag whitespace ('>' … '<') is always safe to
+             * drop in full — it is never a text node.
+             *
+             * AUD-03 (confirmed lossy): SVG/XML has no xml:space="preserve"
+             * awareness here, so collapsing a text-node whitespace run — even
+             * to a single space — can corrupt content the document declared
+             * significant (e.g. <text xml:space="preserve"> or embedded
+             * <style>/<script> text where run-length matters). Tracking
+             * xml:space state across nested/inherited elements is a
+             * meaningfully bigger change (attribute parse + element-stack
+             * scoping) than fits this gate. Conservative choice: when the
+             * flag is clear, copy the buffered run verbatim in a text node
+             * rather than attempt partial xml:space support that could still
+             * be wrong for inherited scope. Aggressive mode keeps the old
+             * single-space collapse. A run with no literal source bytes
+             * (comment-synthesized, pending_start == i) always collapses —
+             * there is nothing to replay. */
+            if (o > 0 && dst[o - 1] == '>' && c == '<') {
+                pending_space = 0;
+            } else if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
+                if (o > 0) {
+                    dst[o++] = ' ';
+                }
+                pending_space = 0;
+            } else {
+                size_t k;
+                for (k = pending_start; k < i; k++) {
+                    dst[o++] = src[k];
+                }
+                pending_space = 0;
             }
-            pending_space = 0;
         }
 
         dst[o++] = c;

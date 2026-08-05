@@ -12,18 +12,29 @@ A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
 significant bytes are never removed.
 
+> **Upgrade note:** output is now **more conservative by default.** Four
+> transforms proven to be able to corrupt valid input under some inputs are
+> now opt-in, gated behind `strip_aggressive on;` (default stays `off`):
+> CSS zero-unit stripping (`0px` → `0`, unsafe inside e.g. a media-query
+> feature test), JS whitespace elision between identical operator characters
+> (`+ +`/`- -`), and SVG/XML/HTML text-node whitespace collapsing (unsafe
+> without `xml:space`/`white-space:pre` awareness, which this byte-level
+> filter does not have). If you relied on the previous (pre-upgrade) output,
+> add `strip_aggressive on;` to restore it — every other transform is
+> unaffected and unchanged. See `## Directives` below and `CHANGES`.
+
 **See also:** [nginx-strip-filter-module: CSS and JavaScript Minification](https://deb.myguard.nl/nginx-strip-filter-module-css-javascript-minification/) — full write-up, benchmarks and config examples on deb.myguard.nl.
 
 ## Features
 
 | Content type | What is stripped |
 |---|---|
-| `text/html` | `<!-- -->` comments, inter-tag whitespace/newline runs, boolean attrs (`disabled="disabled"` → `disabled`), safe attribute-value unquoting (`class="btn"` → `class=btn`) |
-| `text/css` | `/* */` comments, redundant whitespace, trailing `;` before `}`, zero units (`0px` → `0`), leading zeros (`0.5` → `.5`), 6→3-digit hex colors (`#ffaabb` → `#fab`) |
-| `application/javascript`, `text/javascript` | `//` and `/* */` comments, safe newline collapse |
+| `text/html` | `<!-- -->` comments, inter-tag whitespace/newline runs, boolean attrs (`disabled="disabled"` → `disabled`), safe attribute-value unquoting (`class="btn"` → `class=btn`), text-node whitespace collapse (**`strip_aggressive` only**) |
+| `text/css` | `/* */` comments, redundant whitespace, trailing `;` before `}`, leading zeros (`0.5` → `.5`), 6→3-digit hex colors (`#ffaabb` → `#fab`), zero units (`0px` → `0`, **`strip_aggressive` only**) |
+| `application/javascript`, `text/javascript` | `//` and `/* */` comments, safe newline collapse (whitespace between identical operator characters, e.g. `+ +`, kept unless **`strip_aggressive`**) |
 | `application/json` | all structural whitespace |
-| `image/svg+xml` | XML comments, inter-tag whitespace (CDATA preserved) |
-| `text/xml`, `application/xml`, `*+xml` | XML comments, inter-tag whitespace (CDATA preserved) — RSS/Atom/sitemap |
+| `image/svg+xml` | XML comments, inter-tag whitespace (CDATA preserved), text-node whitespace collapse (**`strip_aggressive` only**) |
+| `text/xml`, `application/xml`, `*+xml` | XML comments, inter-tag whitespace (CDATA preserved), text-node whitespace collapse (**`strip_aggressive` only**) — RSS/Atom/sitemap |
 
 **Smart, not brute:** regions that must survive verbatim are passed through
 untouched:
@@ -49,7 +60,7 @@ All directives are valid in `http`, `server` and `location` blocks.
 | `strip_json` | `off` | Enable JSON minification |
 | `strip_svg` | `off` | Enable SVG (`image/svg+xml`) minification |
 | `strip_xml` | `off` | Enable XML minification (`text/xml`, `application/xml`, any `+xml` subtype — RSS/Atom/sitemap) |
-| `strip_aggressive` | `off` | Enable additional lossy transforms not guaranteed to preserve meaning on all valid input. Off = conservative (the module's default behavior). |
+| `strip_aggressive` | `off` | Enable four transforms proven to be able to corrupt valid input under some inputs: CSS zero-unit stripping, JS identical-operator whitespace elision, and SVG/XML/HTML text-node whitespace collapse. Off (default) = conservative, byte-preserving for these cases. Restores pre-upgrade output — see the note above `## Features`. |
 | `strip_min_size` | `0` | Skip bodies smaller than this (bytes) |
 | `strip_max_size` | `10m` | Skip bodies larger than this (buffered whole) |
 | `strip_types` | `text/html` | Extra MIME types treated as HTML |

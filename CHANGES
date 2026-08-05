@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### BEHAVIOUR CHANGE: default output is now conservative (2026-08)
+
+Gated four transforms — proven able to corrupt valid input under some inputs
+— behind `STRIP_F_AGGRESSIVE` / `strip_aggressive on;` (default remains
+`off`):
+
+- CSS: zero-unit stripping (`0px` → `0`) is invalid inside contexts where a
+  bare `<number>` is not a valid `<length>`, e.g.
+  `@media (min-width:0px)` → `(min-width:0)`.
+- JS: dropping the space between two identical operator characters changes
+  the token stream, e.g. `a + +b` → `a++b` (unary plus fused into increment).
+- SVG/XML: collapsing text-node whitespace has no `xml:space="preserve"`
+  awareness and can corrupt whitespace-significant content.
+- HTML: collapsing text-node whitespace has no `white-space: pre`/`pre-wrap`
+  (CSS) awareness and can corrupt whitespace-significant content.
+
+**Upgrade impact:** minified output changes for responses that previously
+triggered any of the above. Add `strip_aggressive on;` to restore the exact
+previous behaviour. `#rrggbb`→`#rgb` hex shortening, CSS leading-zero strip
+(`0.5`→`.5`), inter-tag whitespace collapse, HTML boolean-attribute collapse
+and all other existing transforms are unaffected. `output <= input` still
+holds in both modes (fuzz-verified).
+
 ### `strip_aggressive` directive: opt-in for lossy minification (2026-08)
 
 Added the `strip_aggressive on|off;` directive (default `off`). This PR is

@@ -51,7 +51,10 @@ if ! command -v actionlint >/dev/null 2>&1; then
   ( cd "$tmp" && grep " ${tarball}\$" actionlint.checksums \
       | sed 's#'"${tarball}"'#actionlint.tgz#' | sha256sum -c - )
   tar -xzf "$tmp/actionlint.tgz" -C "$tmp" actionlint
-  install -m 0755 "$tmp/actionlint" "${HOME}/.local/bin/actionlint"
+  # -D creates ~/.local/bin when it is absent. A hosted runner image that has
+  # never had a --user pip/pipx install has no such dir, and plain `install`
+  # fails with "No such file or directory" instead of creating it.
+  install -D -m 0755 "$tmp/actionlint" "${HOME}/.local/bin/actionlint"
   echo "install.sh: installed actionlint to ${HOME}/.local/bin -- ensure that dir is on PATH" >&2
 fi
 

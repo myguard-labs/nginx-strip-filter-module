@@ -43,6 +43,7 @@ fi
 
 python3 << 'PYEOF'
 import sys
+import re
 import yaml
 import glob
 import os
@@ -82,16 +83,28 @@ def find_runtime_jobs():
                 has_port_static = isinstance(env, dict) and 'TEST_BASE_PORT' in env
                 port_value = env.get('TEST_BASE_PORT', 'NOT SET') if isinstance(env, dict) else 'NOT SET'
 
-                # Check if job calls max-port.sh (which requires TEST_BASE_PORT to be set)
+                # A job may instead ASSIGN TEST_BASE_PORT at runtime, by writing
+                # it to $GITHUB_ENV (the matrix jobs do this, one band per leg).
+                #
+                # Match the ASSIGNMENT, never a mere mention of max-port.sh:
+                # max-port.sh *reads* TEST_BASE_PORT, it does not set it. Keying
+                # on the consumer made this gate unfalsifiable -- every runtime
+                # job calls max-port.sh, so deleting a job's real declaration
+                # still passed. That is the repo's recurring "selector that
+                # selects nothing / accepts everything" class; do not reintroduce
+                # it by relaxing this back to a substring check for the script.
                 has_port_dynamic = False
                 if 'steps' in job_data:
                     for step in job_data.get('steps', []):
                         if isinstance(step, dict):
-                            run_cmd = step.get('run', '')
-                            if 'max-port.sh' in run_cmd:
+                            run_cmd = step.get('run', '') or ''
+                            if re.search(
+                                r'TEST_BASE_PORT=.*>>\s*"?\$\{?GITHUB_ENV',
+                                run_cmd,
+                            ):
                                 has_port_dynamic = True
                                 if port_value == 'NOT SET':
-                                    port_value = 'set dynamically'
+                                    port_value = 'set dynamically ($GITHUB_ENV)'
                                 break
 
                 has_port = has_port_static or has_port_dynamic

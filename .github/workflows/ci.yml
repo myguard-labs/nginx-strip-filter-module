@@ -1,4 +1,4 @@
-# sync-sha: f240845159d74ee167e366c0a5b07bc6e07cc8ac83181089e6fa6fb88b58f1ad
+# sync-sha: 1a5b73a884f5a41f85cfb63301c31f0e595ed91babca0ff2297f79b6676a7979
 name: CI
 
 # Single entry point for the PR suite.
@@ -72,6 +72,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - name: "Assert documented lane map matches needs: graph"
         run: python3 ci/tools/check-lane-map.py .github/workflows/ci.yml
 

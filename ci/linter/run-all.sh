@@ -94,6 +94,12 @@ if ! env SHELLCHECK_OPTS=-Swarning actionlint -ignore 'label ".+" is unknown' .g
   status=1
 fi
 
+echo "== ci-ports (runtime jobs declare TEST_BASE_PORT) =="
+if ! bash ci/linter/lint-ci-ports.sh; then
+  echo "run-all.sh: ci-ports finding" >&2
+  status=1
+fi
+
 echo "== clang-tidy (cert-*, security.*) =="
 if [ -z "${NGINX_SRC_TREE:-}" ]; then
   echo "run-all.sh: NGINX_SRC_TREE not set -- clang-tidy needs a configured nginx" >&2

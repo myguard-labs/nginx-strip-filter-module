@@ -1,4 +1,4 @@
-# sync-sha: 9488db59ff0d15d84b163dd5c0c6a443d7faef8a32c6d4882cf57623bbe56fc4
+# sync-sha: d44fc27d699ac96635a8864a266fa3fb7717f3ecd2e08e898a9618eda4a2f166
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -58,6 +58,11 @@ jobs:
     name: Build & Test::Nginx (${{ matrix.flavor }} ${{ matrix.label }})
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 30
+    # Each concurrent matrix leg gets a unique 64-wide port band to avoid
+    # collisions on builder02's persistent runner pool. Bands assigned:
+    # mainline=19520, stable=19584, angie=19648. This job runs concurrently with
+    # memcheck (19328) and helgrind (19392) and is also in the same runner pool
+    # as build-test.yml (19200), asan (19264), and valgrind.yml (19456).
     strategy:
       fail-fast: false
       # A matrix is expanded before any step runs, so load-versions.sh cannot
@@ -70,14 +75,17 @@ jobs:
             version_key: NGINX_MAINLINE
             sha_key: NGINX_MAINLINE_SHA256
             label: mainline
+            port: '19520'
           - flavor: nginx
             version_key: NGINX_STABLE
             sha_key: NGINX_STABLE_SHA256
             label: stable
+            port: '19584'
           - flavor: angie
             version_key: ANGIE_VERSION
             sha_key: ANGIE_SHA256
             label: angie
+            port: '19648'
     steps:
       - name: Checkout module
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -95,10 +103,11 @@ jobs:
             cpanminus libio-socket-ssl-perl ccache
           sudo cpanm --notest --quiet Test::Nginx
 
-      - name: Resolve matrix version
+      - name: Resolve matrix version and port
         # The cell names a versions.env key (NGINX_MAINLINE/NGINX_STABLE/
         # ANGIE_VERSION); dereference it now that load-versions.sh has put the
         # pins in the environment, so later steps can use env.MATRIX_VERSION.
+        # Also export TEST_BASE_PORT from the matrix.port value.
         env:
           # Through env, not inline ${{ }}: an expression expanded straight into
           # a run: block is template injection (zizmor template-injection). The
@@ -106,6 +115,7 @@ jobs:
           # nothing and stops the pattern from being copied somewhere it is not.
           MATRIX_VERSION_KEY: ${{ matrix.version_key }}
           MATRIX_SHA_KEY: ${{ matrix.sha_key }}
+          MATRIX_PORT: ${{ matrix.port }}
         run: |
           key="$MATRIX_VERSION_KEY"
           value="${!key:-}"
@@ -124,6 +134,9 @@ jobs:
           fi
           echo "MATRIX_SHA256=$shaval" >> "$GITHUB_ENV"
           echo "resolved $shakey=$shaval"
+
+          echo "TEST_BASE_PORT=$MATRIX_PORT" >> "$GITHUB_ENV"
+          echo "TEST_BASE_PORT=$MATRIX_PORT"
 
       # Keyed on version+sha256, not version alone: re-pinning the sha at an
       # unchanged version string must invalidate this cache, not keep
@@ -165,6 +178,9 @@ jobs:
       - name: ccache stats
         if: always()
         run: ccache -s
+
+      - name: Verify port band is free
+        run: bash ci/tools/max-port.sh "$TEST_BASE_PORT"
 
       - name: Run ci/t/
         env:

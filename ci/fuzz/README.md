@@ -132,6 +132,7 @@ callable without inventing nginx scaffolding, so it stays an acknowledged gap,
 not a new target (see "Uncovered surfaces" above; unchanged from #28).
 
 Checks run:
+
 - Corpus/dictionary counts still match the tables above exactly (tracked
   seeds: css 4, html 5, js 3, json 3, svg 3, xml 3; dict tokens: css 19,
   html 24, js 18, json 14, svg 18, xml 15 — `wc -l ci/fuzz/fuzz.dict.*`).

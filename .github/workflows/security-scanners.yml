@@ -1,4 +1,4 @@
-# sync-sha: 960948ff0c902ab0c56b837103c9ec127126795cda9f631b6479e3d1a67e9720
+# sync-sha: 1ae2347978de468843cd3c13a4c66692920eb2534ec3be6149578179eabca497
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -119,3 +119,47 @@ jobs:
             ${{ github.workspace }}/clang-tidy.log
             ${{ github.workspace }}/semgrep.log
           retention-days: 14
+
+  linter:
+    name: Linter (ci/linter/run-all.sh)
+    # Card 32: one installer + one entry point (ci/linter/), and CI runs the
+    # SAME entry point on a hosted runner -- this job, not a reimplementation
+    # of it in YAML. Same nginx-tree setup as the `scanners` job above so
+    # clang-tidy's target-specific relaxation (see run-all.sh's header) is
+    # satisfied here too: NGINX_SRC_TREE is set, so clang-tidy runs for real
+    # instead of exiting 2.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Install linters
+        run: |
+          bash ci/linter/install.sh
+          # install.sh drops actionlint (and a pip --user semgrep) into
+          # ~/.local/bin and deliberately does not touch the caller's
+          # environment -- it has to work the same from a shell, a hook and
+          # here. On a runner that dir is not on PATH by default, so
+          # run-all.sh would correctly report the tool missing and exit 2.
+          # Export it for the later steps rather than making the installer
+          # CI-aware.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Cache source tarball
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/nginx-${{ env.NGINX_VERSION }}.tar.gz
+          key: src-nginx-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
+      - name: Configure nginx src tree (clang-tidy headers)
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          bash .github/scripts/fetch-verify.sh \
+            "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+            "$NGINX_VERSION_SHA256" \
+            ".build/nginx-${NGINX_VERSION}.tar.gz"
+          tar -xzf ".build/nginx-${NGINX_VERSION}.tar.gz"
+          cd "nginx-${NGINX_VERSION}"
+          CC=gcc ./configure --with-compat --add-dynamic-module="$GITHUB_WORKSPACE" >/dev/null
+          echo "NGINX_SRC_TREE=$PWD" >> "$GITHUB_ENV"
+      - name: Run linters
+        run: bash ci/linter/run-all.sh

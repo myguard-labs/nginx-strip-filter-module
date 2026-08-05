@@ -1,4 +1,4 @@
-# sync-sha: 9902d100fbb10a17f1565cebb40f84b5b0df53fc77a72e8b4a9b310c269566dc
+# sync-sha: c7ac958dff3520e904830821f7b0cd3e740a8f7da3611cff272efa57f821aa23
 name: Fuzzing
 
 # Fast fuzz regression gate on every PR/push — 20s/target on all 6 strip
@@ -43,7 +43,25 @@ jobs:
       - name: Build fuzz targets
         run: bash ci/fuzz/build.sh "$GITHUB_WORKSPACE/ci/fuzz"
 
-      - name: Run each target 20s
+      - name: Replay regressions (deterministic)
+        run: |
+          set -euo pipefail
+          cd ci/fuzz
+          for k in html css js json svg xml; do
+            echo "::group::replay_fuzz_strip_${k}"
+            set +e
+            ./"fuzz_strip_${k}" \
+              -runs=0 \
+              -dict="fuzz.dict.${k}" \
+              "corpus_${k}/"
+            rc=$?
+            set -e
+            [ $rc -eq 0 ] || { echo "❌ replay_fuzz_strip_${k} crash (exit $rc)"; exit 1; }
+            echo "::endgroup::"
+            echo "✓ replay_fuzz_strip_${k}: all corpus seeds pass"
+          done
+
+      - name: Fuzz each target 20s (fresh mutations)
         run: |
           set -euo pipefail
           cd ci/fuzz

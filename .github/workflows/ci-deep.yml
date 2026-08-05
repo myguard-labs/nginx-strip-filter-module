@@ -1,4 +1,4 @@
-# sync-sha: 934ecf459922a7b91d4033c6b8d237b5322a905f013294d08636dd1e0ce8ce31
+# sync-sha: f4f58cad265b08df2ab192125349a3ff850d3b123e850e790a0dc91fb26eef43
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -471,4 +471,43 @@ jobs:
             ${{ github.workspace }}/flawfinder.log
             ${{ github.workspace }}/clang-tidy.log
             ${{ github.workspace }}/semgrep.log
+          retention-days: 14
+
+  coverage:
+    # Publishes a REPORT, not a gate: no fail-under is set (see coverage.sh's
+    # header), so this job's exit status reflects only "did the build/tests
+    # run", never "is the number high enough" -- the repo's policy is
+    # meaningful tests over a percentage. Deep-only (not the PR gate) because
+    # gcov instrumentation is its own from-scratch configure+compile, on top
+    # of the fast lane's existing build -- the same budget reasoning as
+    # build-flavors above.
+    name: Coverage report
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Load version pins
+        run: bash .github/scripts/load-versions.sh
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl libpcre2-dev zlib1g-dev \
+            cpanminus libio-socket-ssl-perl gcovr
+          sudo cpanm --notest --quiet Test::Nginx
+
+      - name: Run coverage.sh (separate gcov-instrumented tree)
+        run: bash ci/tools/coverage.sh "$NGINX_VERSION"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage-report
+          path: ${{ github.workspace }}/.build/coverage/
           retention-days: 14

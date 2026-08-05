@@ -1,0 +1,40 @@
+# Changes
+
+## Unreleased
+
+### CI standardisation / skeleton-layout adoption (2026-08)
+
+Adopted the `nginx-skeleton-module` reference CI layout: sources moved to
+`src/`, tests/fuzz/tools consolidated under `ci/`, and the workflow set
+(`ci.yml`, `build-test.yml`, `security-scanners.yml`, `fuzzing.yml`,
+`asan.yml`, `codeql.yml`, `valgrind.yml`, `ci-deep.yml`, `bump.yml`) rebuilt
+around a single `ci.yml` PR-lane entry point instead of five independent
+`pull_request` triggers. Along the way:
+
+- Local lint gate ported to `ci/linter/` (`run-all.sh` + `install.sh`),
+  covering flawfinder, semgrep, shellcheck, actionlint, `ruff` (pinned
+  `0.16.1`), `lint-ci-ports.sh` (every runtime-bearing CI job declares a
+  `TEST_BASE_PORT`), and now `lint-docs-drift.sh` (README `## CI` table and
+  `.github/workflows/` never drift apart).
+- `.pre-commit-config.yaml` and `.githooks/pre-commit` tracked (previously
+  present but untracked, so a fresh clone got zero hooks); `core.hooksPath`
+  wiring documented in `CONTRIBUTING.md`.
+- `valgrind.yml` deliberately moved out of the PR lane to weekly
+  cron + `workflow_dispatch` (retains `workflow_call`) — it was the 769s
+  budget-setter on every PR (2.5x the rest of the critical path combined).
+  PR-lane wall-clock: 12m52s -> 5m59s. Per-PR memory-safety coverage remains
+  via `asan.yml`. Depth of the weekly/on-demand run is unchanged. See
+  `memory/labs/nginx-strip-filter-module/skeleton-findings.md` § F-VG.
+- Bot-review sweep across PRs 1-16, 18, 20-44: 24 review + 30 issue-level
+  `coderabbitai[bot]` comments triaged, 9 confirmed findings fixed, 2 refuted
+  with evidence, 3 already fixed in-tree.
+- Extra target-only gates kept (not folded into the reference set): the
+  `unit-core` job (standalone `strip_core.c` unit run, no nginx build), 6
+  fuzz targets (one per content type vs. the reference's 2), the Discord
+  failure-notify steps in `ci-deep.yml`, and `ci/tools/sync-stamp.sh`
+  (detects drift between this repo's shared `.github/` files and the
+  reference skeleton's).
+
+See `memory/labs/nginx-strip-filter-module/` (index.md, issues.md,
+lessons.md, skeleton-findings.md, adoption-findings.md) for full detail,
+measurements and rejected alternatives.

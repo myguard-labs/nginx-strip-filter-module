@@ -61,6 +61,36 @@ Before pushing a parser or fuzz-harness change, fuzz locally first:
 `ci/fuzz/build.sh` compiles every `ci/fuzz/fuzz_*.c` with `-Werror`, so a stale
 harness signature fails right there instead of in CI.
 
+## Local checks before you push
+
+This repo tracks a pre-commit hook at `.githooks/pre-commit`. Git does **not**
+run it until you point `core.hooksPath` at that directory — do this once per
+clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Verify it took:
+
+```bash
+git config --get core.hooksPath     # -> .githooks
+```
+
+Once enabled, every `git commit` runs the `pre-commit` framework
+(`.pre-commit-config.yaml`) against your staged files — whitespace/EOF
+fixers, `detect-private-key`, `gitleaks`, flawfinder, semgrep, cppcheck and
+ruff at the same thresholds CI gates on. It needs `pre-commit >= 4.6.1` on
+`PATH` (`pipx install pre-commit`); the hook fails loudly, never silently, if
+that binary is missing. Bypass in an emergency with `git commit --no-verify`
+— CI still gates the PR either way.
+
+Separately, `ci/linter/run-all.sh` covers overlapping but not identical
+ground (adds shellcheck, actionlint, `lint-ci-ports.sh`, `lint-docs-drift.sh`;
+runs over the whole tree, not just staged files) and is not wired into the
+hook. Install its tools with `ci/linter/install.sh`. Full detail on both
+gates: [ci/linter/README.md](ci/linter/README.md).
+
 ## Coding conventions
 
 - **nginx style.** This is an nginx module: follow the

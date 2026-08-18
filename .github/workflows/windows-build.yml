@@ -1,0 +1,296 @@
+# sync-sha: 4b227b24e056744e47ae1ca312e0fad3c0cc4222daf8d95e1adc4960abb11f9e
+name: Windows build
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'config'
+      - '.gitattributes'
+      - '.github/versions.env'
+      - '.github/workflows/windows-build.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'config'
+      - '.gitattributes'
+      - '.github/versions.env'
+      - '.github/workflows/windows-build.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  msvc:
+    name: MSVC x64 static build and runtime
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      TEST_BASE_PORT: '18110'
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Load pinned nginx version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Content .github/versions.env |
+            Where-Object { $_ -match '^(NGINX_VERSION|NGINX_VERSION_SHA256)=' } |
+            ForEach-Object { $_ >> $env:GITHUB_ENV }
+      - name: Fetch and verify nginx
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = "nginx-$env:NGINX_VERSION.tar.gz"
+          Invoke-WebRequest `
+            -Uri "https://nginx.org/download/$archive" `
+            -OutFile $archive `
+            -ConnectionTimeoutSeconds 30 -OperationTimeoutSeconds 60
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $env:NGINX_VERSION_SHA256.ToLower()) {
+            throw "sha256 mismatch for $archive"
+          }
+          tar -xzf $archive
+          if ($LASTEXITCODE -ne 0) { throw "tar failed for $archive" }
+      - name: Locate MSVC environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $root = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $root) { throw 'Visual C++ toolchain not found' }
+          $vcvars = "$root\VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found: $vcvars" }
+          "VCVARS=$vcvars" >> $env:GITHUB_ENV
+      - name: Configure static module
+        shell: bash
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          set -euo pipefail
+          module_dir=$(cygpath -w "$GITHUB_WORKSPACE")
+          module_dir=${module_dir//\\//}
+          ./configure \
+            --with-cc=cl --builddir=objs --prefix= \
+            --conf-path=conf/nginx.conf --pid-path=logs/nginx.pid \
+            --http-log-path=logs/access.log --error-log-path=logs/error.log \
+            --sbin-path=nginx.exe \
+            --http-client-body-temp-path=temp/client_body_temp \
+            --http-proxy-temp-path=temp/proxy_temp \
+            --http-fastcgi-temp-path=temp/fastcgi_temp \
+            --with-cc-opt="-DFD_SETSIZE=1024 -MT /utf-8 /Zc:preprocessor" \
+            --without-http_rewrite_module --without-http_gzip_module \
+            --add-module="$module_dir"
+      - name: Build
+        shell: cmd # zizmor: ignore[misfeature]
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          call "%VCVARS%" || exit /b 1
+          nmake -f objs/Makefile || exit /b 1
+      - name: Verify registration, directives, and runtime
+        shell: pwsh
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path objs\nginx.exe)) { throw 'nginx.exe missing' }
+          if (-not (Test-Path objs\addon\src\ngx_http_strip_filter_module.obj)) {
+            throw 'module object missing'
+          }
+          if (-not (Test-Path objs\addon\src\strip_core_nginx_win32.obj)) {
+            throw 'core object missing'
+          }
+          if ((Get-Content objs\ngx_modules.c -Raw) -notmatch
+              'ngx_http_strip_filter_module') {
+            throw 'module absent from static module table'
+          }
+          New-Item -ItemType Directory -Force `
+            -Path conf, logs, temp, html\raw, html\min | Out-Null
+          'ok' | Set-Content -Encoding ascii html\raw\item.txt
+          'ok' | Set-Content -Encoding ascii html\min\item.txt
+          function Write-Conf([string]$directive) {
+            @('events { worker_connections 64; }', 'http {', ' server {',
+              "  listen 127.0.0.1:$env:TEST_BASE_PORT;", '  location / {',
+              '   root html;', '   default_type application/json;',
+              "   $directive", '  }', ' }', '}') |
+              Set-Content -Encoding ascii conf/nginx.conf
+          }
+          function Test-Config {
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+              & .\objs\nginx.exe -p . -c conf/nginx.conf -t 2>&1 |
+                Out-String | Write-Host
+              return $LASTEXITCODE
+            } finally { $ErrorActionPreference = $old }
+          }
+          Write-Conf 'strip_json on;'
+          if ((Test-Config) -ne 0) { throw 'valid strip_json directive rejected' }
+          Write-Conf 'strip_NOT_A_DIRECTIVE on;'
+          if ((Test-Config) -eq 0) { throw 'bogus directive accepted' }
+          @('events { worker_connections 64; }', 'http {', ' server {',
+            "  listen 127.0.0.1:$env:TEST_BASE_PORT;",
+            '  location /raw/ { root html; autoindex on; }',
+            '  location /min/ { root html; autoindex on; strip on; }',
+            ' }', '}') | Set-Content -Encoding ascii conf/nginx.conf
+          $nginx = Start-Process -FilePath .\objs\nginx.exe `
+            -ArgumentList '-p', '.', '-c', 'conf/nginx.conf' -PassThru
+          try {
+            $client = [System.Net.Http.HttpClient]::new()
+            $raw = $null
+            foreach ($attempt in 1..30) {
+              try {
+                $response = $client.GetAsync(
+                  "http://127.0.0.1:$env:TEST_BASE_PORT/raw/").Result
+                if ([int]$response.StatusCode -eq 200) {
+                  $raw = $response.Content.ReadAsStringAsync().Result
+                  break
+                }
+              } catch {}
+              Start-Sleep -Milliseconds 200
+            }
+            if ($null -eq $raw) { throw 'nginx did not become ready' }
+            $min = $client.GetStringAsync(
+              "http://127.0.0.1:$env:TEST_BASE_PORT/min/").Result
+            if ($raw -notmatch 'item.txt' -or $min -notmatch 'item.txt') {
+              throw 'autoindex fixture missing from response'
+            }
+            if ($min.Length -ge $raw.Length) {
+              throw "filtered response was not smaller: raw=$($raw.Length) min=$($min.Length)"
+            }
+          } finally {
+            & .\objs\nginx.exe -p . -c conf/nginx.conf -s stop
+            $nginx.WaitForExit(5000) | Out-Null
+          }
+      - name: Dump diagnostics on failure
+        if: failure()
+        shell: pwsh
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          foreach ($file in 'objs/autoconf.err', 'objs/Makefile', 'logs/error.log') {
+            if (Test-Path $file) { Get-Content $file -Tail 100 }
+          }
+
+  mingw:
+    name: MinGW-w64 x64 dynamic build and runtime
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      TEST_BASE_PORT: '18111'
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            base-devel
+            mingw-w64-x86_64-gcc
+      - name: Load pinned nginx version
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          grep -E '^(NGINX_VERSION|NGINX_VERSION_SHA256)=' .github/versions.env >> "$GITHUB_ENV"
+      - name: Fetch and verify nginx
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          archive="nginx-${NGINX_VERSION}.tar.gz"
+          curl -fsSL -o "$archive" "https://nginx.org/download/$archive"
+          echo "$NGINX_VERSION_SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive"
+      - name: Configure dynamic module
+        shell: msys2 {0}
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          set -euo pipefail
+          ./configure \
+            --with-cc=gcc --builddir=objs --prefix= \
+            --conf-path=conf/nginx.conf --pid-path=logs/nginx.pid \
+            --http-log-path=logs/access.log --error-log-path=logs/error.log \
+            --sbin-path=nginx.exe \
+            --http-client-body-temp-path=temp/client_body_temp \
+            --http-proxy-temp-path=temp/proxy_temp \
+            --http-fastcgi-temp-path=temp/fastcgi_temp \
+            --with-cc-opt="-DFD_SETSIZE=1024" \
+            --without-http_rewrite_module --without-http_gzip_module \
+            --add-dynamic-module="$(pwd)/.."
+      - name: Build
+        shell: msys2 {0}
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          set -euo pipefail
+          make
+      - name: Verify module, directives, and runtime
+        shell: msys2 {0}
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          set -euo pipefail
+          test -f objs/nginx.exe
+          test -f objs/ngx_http_strip_filter_module.so
+          test -f objs/addon/src/ngx_http_strip_filter_module.o
+          test -f objs/addon/src/strip_core_nginx_win32.o
+          grep -q ngx_http_strip_filter_module \
+            objs/ngx_http_strip_filter_module_modules.c
+          mkdir -p conf logs temp html/raw html/min
+          printf 'ok\n' > html/raw/item.txt
+          printf 'ok\n' > html/min/item.txt
+          write_conf() {
+            printf '%s\n' \
+              'load_module objs/ngx_http_strip_filter_module.so;' \
+              'events { worker_connections 64; }' \
+              "http { server { listen 127.0.0.1:${TEST_BASE_PORT}; location / {" \
+              'root html; default_type application/json;' \
+              "$1" \
+              '} } }' > conf/nginx.conf
+          }
+          write_conf 'strip_json on;'
+          ./objs/nginx.exe -p . -c conf/nginx.conf -t
+          write_conf 'strip_NOT_A_DIRECTIVE on;'
+          if ./objs/nginx.exe -p . -c conf/nginx.conf -t 2>&1; then
+            echo 'negative control passed: bogus directive accepted'
+            exit 1
+          fi
+          printf '%s\n' \
+            'load_module objs/ngx_http_strip_filter_module.so;' \
+            'events { worker_connections 64; }' \
+            "http { server { listen 127.0.0.1:${TEST_BASE_PORT};" \
+            'location /raw/ { root html; autoindex on; }' \
+            'location /min/ { root html; autoindex on; strip on; }' \
+            '} }' > conf/nginx.conf
+          ./objs/nginx.exe -p . -c conf/nginx.conf &
+          nginx_pid=$!
+          trap './objs/nginx.exe -p . -c conf/nginx.conf -s stop || true; wait "$nginx_pid" || true' EXIT
+          for attempt in $(seq 1 30); do
+            raw=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/raw/" 2>/dev/null || true)
+            printf '%s' "$raw" | grep -q item.txt && break
+            sleep 0.2
+          done
+          min=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/min/")
+          printf '%s' "$raw" | grep -q item.txt
+          printf '%s' "$min" | grep -q item.txt
+          [ "${#min}" -lt "${#raw}" ] || {
+            echo "filtered response was not smaller: raw=${#raw} min=${#min}"
+            exit 1
+          }
+      - name: Dump diagnostics on failure
+        if: failure()
+        shell: msys2 {0}
+        working-directory: nginx-${{ env.NGINX_VERSION }}
+        run: |
+          for file in objs/autoconf.err objs/Makefile logs/error.log; do
+            [ ! -f "$file" ] || { echo "===== $file ====="; tail -100 "$file"; }
+          done

@@ -115,8 +115,9 @@ jobs:
           }
           New-Item -ItemType Directory -Force `
             -Path conf, logs, temp, html\raw, html\min | Out-Null
-          'ok' | Set-Content -Encoding ascii html\raw\item.txt
-          'ok' | Set-Content -Encoding ascii html\min\item.txt
+          $fixture = '<html><!--drop--><button disabled="disabled">x</button></html>'
+          $fixture | Set-Content -Encoding ascii html\raw\item.html
+          $fixture | Set-Content -Encoding ascii html\min\item.html
           function Write-Conf([string]$directive) {
             @('events { worker_connections 64; }', 'http {', ' server {',
               "  listen 127.0.0.1:$env:TEST_BASE_PORT;", '  location / {',
@@ -139,8 +140,8 @@ jobs:
           if ((Test-Config) -eq 0) { throw 'bogus directive accepted' }
           @('events { worker_connections 64; }', 'http {', ' server {',
             "  listen 127.0.0.1:$env:TEST_BASE_PORT;",
-            '  location /raw/ { root html; autoindex on; }',
-            '  location /min/ { root html; autoindex on; strip on; }',
+            '  location /raw/ { root html; }',
+            '  location /min/ { root html; strip on; }',
             ' }', '}') | Set-Content -Encoding ascii conf/nginx.conf
           $nginx = Start-Process -FilePath .\objs\nginx.exe `
             -ArgumentList '-p', '.', '-c', 'conf/nginx.conf' -PassThru
@@ -150,7 +151,7 @@ jobs:
             foreach ($attempt in 1..30) {
               try {
                 $response = $client.GetAsync(
-                  "http://127.0.0.1:$env:TEST_BASE_PORT/raw/").Result
+                  "http://127.0.0.1:$env:TEST_BASE_PORT/raw/item.html").Result
                 if ([int]$response.StatusCode -eq 200) {
                   $raw = $response.Content.ReadAsStringAsync().Result
                   break
@@ -160,9 +161,10 @@ jobs:
             }
             if ($null -eq $raw) { throw 'nginx did not become ready' }
             $min = $client.GetStringAsync(
-              "http://127.0.0.1:$env:TEST_BASE_PORT/min/").Result
-            if ($raw -notmatch 'item.txt' -or $min -notmatch 'item.txt') {
-              throw 'autoindex fixture missing from response'
+              "http://127.0.0.1:$env:TEST_BASE_PORT/min/item.html").Result
+            if ($raw -notmatch '<!--drop-->' -or
+                $min.TrimEnd() -ne '<html><button disabled>x</button></html>') {
+              throw 'conservative HTML transform mismatch'
             }
             if ($min.Length -ge $raw.Length) {
               throw "filtered response was not smaller: raw=$($raw.Length) min=$($min.Length)"
@@ -247,8 +249,9 @@ jobs:
           grep -q ngx_http_strip_filter_module \
             objs/ngx_http_strip_filter_module_modules.c
           mkdir -p conf logs temp html/raw html/min
-          printf 'ok\n' > html/raw/item.txt
-          printf 'ok\n' > html/min/item.txt
+          fixture='<html><!--drop--><button disabled="disabled">x</button></html>'
+          printf '%s' "$fixture" > html/raw/item.html
+          printf '%s' "$fixture" > html/min/item.html
           write_conf() {
             printf '%s\n' \
               'load_module objs/ngx_http_strip_filter_module.so;' \
@@ -269,20 +272,23 @@ jobs:
             'load_module objs/ngx_http_strip_filter_module.so;' \
             'events { worker_connections 64; }' \
             "http { server { listen 127.0.0.1:${TEST_BASE_PORT};" \
-            'location /raw/ { root html; autoindex on; }' \
-            'location /min/ { root html; autoindex on; strip on; }' \
+            'location /raw/ { root html; }' \
+            'location /min/ { root html; strip on; }' \
             '} }' > conf/nginx.conf
           ./objs/nginx.exe -p . -c conf/nginx.conf &
           nginx_pid=$!
           trap './objs/nginx.exe -p . -c conf/nginx.conf -s stop || true; wait "$nginx_pid" || true' EXIT
           for attempt in $(seq 1 30); do
-            raw=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/raw/" 2>/dev/null || true)
-            printf '%s' "$raw" | grep -q item.txt && break
+            raw=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/raw/item.html" 2>/dev/null || true)
+            printf '%s' "$raw" | grep -q '<!--drop-->' && break
             sleep 0.2
           done
-          min=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/min/")
-          printf '%s' "$raw" | grep -q item.txt
-          printf '%s' "$min" | grep -q item.txt
+          min=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/min/item.html")
+          printf '%s' "$raw" | grep -q '<!--drop-->'
+          [ "$min" = '<html><button disabled>x</button></html>' ] || {
+            echo "conservative HTML transform mismatch: $min"
+            exit 1
+          }
           [ "${#min}" -lt "${#raw}" ] || {
             echo "filtered response was not smaller: raw=${#raw} min=${#min}"
             exit 1

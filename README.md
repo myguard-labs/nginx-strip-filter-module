@@ -7,6 +7,7 @@
 [![CodeQL](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/codeql.yml)
 [![Valgrind](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/valgrind.yml)
 [![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
+[![Windows build](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/windows-build.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/windows-build.yml)
 
 A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
 and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
@@ -109,6 +110,20 @@ Or use `ci/tools/ci-build.sh` which downloads and builds nginx automatically:
 bash ci/tools/ci-build.sh nginx 1.31.1
 ```
 
+### Windows
+
+The module supports both native Windows nginx toolchains:
+
+- MSVC builds the module statically with `--add-module`.
+- MinGW-w64 builds a loadable PE DLL with `--add-dynamic-module`; nginx keeps
+  the conventional `.so` filename for that DLL.
+
+The hosted Windows gate builds both variants, checks that nginx registered the
+module and its directive, rejects a bogus directive as a negative control, and
+serves a JSON response through the filter. It disables nginx's rewrite and gzip
+modules only to avoid unrelated PCRE and zlib build dependencies; the strip
+filter itself does not require either library.
+
 ## Testing
 
 Two suites, deliberately separate.
@@ -186,8 +201,10 @@ and [COVERAGE-HOWTO.md](https://github.com/myguard-labs/nginx-test-harness/blob/
 
 ## CI
 
-Only `ci.yml` has a `pull_request` trigger. The PR-time workflows below are
-`workflow_call` members it lanes, so a PR asks for one run, not many.
+For the Linux suite, only `ci.yml` has a `pull_request` trigger. Its PR-time
+workflows are `workflow_call` members it lanes, so a PR asks for one Linux run,
+not many. `windows-build.yml` is a separate GitHub-hosted gate because it needs
+the native Windows toolchains and consumes no self-hosted runner slot.
 `ci/linter/lint-docs-drift.sh` gates that this table and `.github/workflows/`
 never drift apart — see [ci/linter/README.md](ci/linter/README.md).
 
@@ -202,6 +219,7 @@ never drift apart — see [ci/linter/README.md](ci/linter/README.md).
 | `valgrind.yml` | weekly + dispatch (+ `workflow_call`) | Test::Nginx suite once under Valgrind memcheck (lite soak) — **deliberately removed from the PR lane** (was the 769s budget-setter; PR-lane wall-clock went 12m52s → 5m59s); per-PR memory-safety coverage is `asan.yml`. See `memory/labs/nginx-strip-filter-module/skeleton-findings.md` § F-VG. |
 | `ci-deep.yml` | monthly + dispatch | exhaustive dynamic analysis — long fuzz, full memcheck + helgrind soak, Discord failure notify |
 | `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, opens a PR against master if anything moved |
+| `windows-build.yml` | PR + push to master + dispatch | native MSVC x64 static build and MinGW-w64 x64 dynamic build; module registration, directive negative control, and live JSON-filter runtime test |
 
 There is no `lint.yml` in this module yet — the reference skeleton's fuller
 `ci/linter/` (perlcritic, yamllint, zizmor, spelling, its own `lint.yml`

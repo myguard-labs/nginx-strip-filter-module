@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Native Windows build coverage (2026-08)
+
+Added native Windows support gates for both nginx toolchains: an MSVC x64
+static build (`--add-module`) and a MinGW-w64 x64 dynamic build
+(`--add-dynamic-module`). Both jobs verify module registration, test a real
+directive plus a bogus-directive negative control, and serve a JSON response
+through the filter. Source and CI line endings are pinned to LF so the same
+module manifest and shell tooling work in Unix, MSYS2, and nginx's MSVC build.
+
 ### Documented limitation: whole-body buffering, flush not honoured (2026-08)
 
 Recorded as a known and intentional constraint rather than changed: the filter

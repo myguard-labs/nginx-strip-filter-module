@@ -1,4 +1,4 @@
-# sync-sha: a25201c03c0c5469a0575e8055e3857fb324219a4864a70955d2739de4f76ae9
+# sync-sha: 4b227b24e056744e47ae1ca312e0fad3c0cc4222daf8d95e1adc4960abb11f9e
 name: Windows build
 
 on:
@@ -106,15 +106,17 @@ jobs:
           if (-not (Test-Path objs\addon\src\ngx_http_strip_filter_module.obj)) {
             throw 'module object missing'
           }
-          if (-not (Test-Path objs\addon\src\strip_core.obj)) {
+          if (-not (Test-Path objs\addon\src\strip_core_nginx_win32.obj)) {
             throw 'core object missing'
           }
           if ((Get-Content objs\ngx_modules.c -Raw) -notmatch
               'ngx_http_strip_filter_module') {
             throw 'module absent from static module table'
           }
-          New-Item -ItemType Directory -Force -Path conf, logs, temp, html | Out-Null
-          '{"a": 1}' | Set-Content -Encoding ascii html/index.html
+          New-Item -ItemType Directory -Force `
+            -Path conf, logs, temp, html\raw, html\min | Out-Null
+          'ok' | Set-Content -Encoding ascii html\raw\item.txt
+          'ok' | Set-Content -Encoding ascii html\min\item.txt
           function Write-Conf([string]$directive) {
             @('events { worker_connections 64; }', 'http {', ' server {',
               "  listen 127.0.0.1:$env:TEST_BASE_PORT;", '  location / {',
@@ -135,25 +137,36 @@ jobs:
           if ((Test-Config) -ne 0) { throw 'valid strip_json directive rejected' }
           Write-Conf 'strip_NOT_A_DIRECTIVE on;'
           if ((Test-Config) -eq 0) { throw 'bogus directive accepted' }
-          Write-Conf 'strip_json on;'
+          @('events { worker_connections 64; }', 'http {', ' server {',
+            "  listen 127.0.0.1:$env:TEST_BASE_PORT;",
+            '  location /raw/ { root html; autoindex on; }',
+            '  location /min/ { root html; autoindex on; strip on; }',
+            ' }', '}') | Set-Content -Encoding ascii conf/nginx.conf
           $nginx = Start-Process -FilePath .\objs\nginx.exe `
             -ArgumentList '-p', '.', '-c', 'conf/nginx.conf' -PassThru
           try {
             $client = [System.Net.Http.HttpClient]::new()
-            $body = $null
+            $raw = $null
             foreach ($attempt in 1..30) {
               try {
                 $response = $client.GetAsync(
-                  "http://127.0.0.1:$env:TEST_BASE_PORT/").Result
+                  "http://127.0.0.1:$env:TEST_BASE_PORT/raw/").Result
                 if ([int]$response.StatusCode -eq 200) {
-                  $body = $response.Content.ReadAsStringAsync().Result
+                  $raw = $response.Content.ReadAsStringAsync().Result
                   break
                 }
               } catch {}
               Start-Sleep -Milliseconds 200
             }
-            if ($null -eq $body) { throw 'nginx did not become ready' }
-            if ($body -ne '{"a":1}') { throw "unexpected response body: $body" }
+            if ($null -eq $raw) { throw 'nginx did not become ready' }
+            $min = $client.GetStringAsync(
+              "http://127.0.0.1:$env:TEST_BASE_PORT/min/").Result
+            if ($raw -notmatch 'item.txt' -or $min -notmatch 'item.txt') {
+              throw 'autoindex fixture missing from response'
+            }
+            if ($min.Length -ge $raw.Length) {
+              throw "filtered response was not smaller: raw=$($raw.Length) min=$($min.Length)"
+            }
           } finally {
             & .\objs\nginx.exe -p . -c conf/nginx.conf -s stop
             $nginx.WaitForExit(5000) | Out-Null
@@ -229,11 +242,12 @@ jobs:
           test -f objs/nginx.exe
           test -f objs/ngx_http_strip_filter_module.so
           test -f objs/addon/src/ngx_http_strip_filter_module.o
-          test -f objs/addon/src/strip_core.o
+          test -f objs/addon/src/strip_core_nginx_win32.o
           grep -q ngx_http_strip_filter_module \
             objs/ngx_http_strip_filter_module_modules.c
-          mkdir -p conf logs temp html
-          printf '{"a": 1}\n' > html/index.html
+          mkdir -p conf logs temp html/raw html/min
+          printf 'ok\n' > html/raw/item.txt
+          printf 'ok\n' > html/min/item.txt
           write_conf() {
             printf '%s\n' \
               'load_module objs/ngx_http_strip_filter_module.so;' \
@@ -250,17 +264,26 @@ jobs:
             echo 'negative control passed: bogus directive accepted'
             exit 1
           fi
-          write_conf 'strip_json on;'
+          printf '%s\n' \
+            'load_module objs/ngx_http_strip_filter_module.so;' \
+            'events { worker_connections 64; }' \
+            "http { server { listen 127.0.0.1:${TEST_BASE_PORT};" \
+            'location /raw/ { root html; autoindex on; }' \
+            'location /min/ { root html; autoindex on; strip on; }' \
+            '} }' > conf/nginx.conf
           ./objs/nginx.exe -p . -c conf/nginx.conf &
           nginx_pid=$!
           trap './objs/nginx.exe -p . -c conf/nginx.conf -s stop || true; wait "$nginx_pid" || true' EXIT
           for attempt in $(seq 1 30); do
-            body=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/" 2>/dev/null || true)
-            [ "$body" = '{"a":1}' ] && break
+            raw=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/raw/" 2>/dev/null || true)
+            printf '%s' "$raw" | grep -q item.txt && break
             sleep 0.2
           done
-          [ "$body" = '{"a":1}' ] || {
-            echo "unexpected response body: $body"
+          min=$(curl.exe -fsS "http://127.0.0.1:${TEST_BASE_PORT}/min/")
+          printf '%s' "$raw" | grep -q item.txt
+          printf '%s' "$min" | grep -q item.txt
+          [ "${#min}" -lt "${#raw}" ] || {
+            echo "filtered response was not smaller: raw=${#raw} min=${#min}"
             exit 1
           }
       - name: Dump diagnostics on failure

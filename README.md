@@ -120,9 +120,9 @@ The module supports both native Windows nginx toolchains:
 
 The hosted Windows gate builds both variants, checks that nginx registered the
 module and its directive, rejects a bogus directive as a negative control, and
-serves a JSON response through the filter. It disables nginx's rewrite and gzip
-modules only to avoid unrelated PCRE and zlib build dependencies; the strip
-filter itself does not require either library.
+compares raw and filtered in-memory HTML responses. It disables nginx's rewrite
+and gzip modules only to avoid unrelated PCRE and zlib build dependencies; the
+strip filter itself does not require either library.
 
 ## Testing
 
@@ -219,7 +219,7 @@ never drift apart — see [ci/linter/README.md](ci/linter/README.md).
 | `valgrind.yml` | weekly + dispatch (+ `workflow_call`) | Test::Nginx suite once under Valgrind memcheck (lite soak) — **deliberately removed from the PR lane** (was the 769s budget-setter; PR-lane wall-clock went 12m52s → 5m59s); per-PR memory-safety coverage is `asan.yml`. See `memory/labs/nginx-strip-filter-module/skeleton-findings.md` § F-VG. |
 | `ci-deep.yml` | monthly + dispatch | exhaustive dynamic analysis — long fuzz, full memcheck + helgrind soak, Discord failure notify |
 | `bump.yml` | weekly + dispatch | checks nginx.org/angie.software for newer pins, opens a PR against master if anything moved |
-| `windows-build.yml` | PR + push to master + dispatch | native MSVC x64 static build and MinGW-w64 x64 dynamic build; module registration, directive negative control, and live JSON-filter runtime test |
+| `windows-build.yml` | PR + push to master + dispatch | native MSVC x64 static build and MinGW-w64 x64 dynamic build; module registration, directive negative control, and live response-filter runtime test |
 
 There is no `lint.yml` in this module yet — the reference skeleton's fuller
 `ci/linter/` (perlcritic, yamllint, zizmor, spelling, its own `lint.yml`

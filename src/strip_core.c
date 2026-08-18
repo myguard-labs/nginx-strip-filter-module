@@ -12,10 +12,6 @@
  * Output is always <= input length, so callers size dst == input length.
  */
 
-#ifdef NGX_STRIP_USE_NGINX_PCH
-#include <ngx_config.h>
-#endif
-
 #include "strip_core.h"
 
 #include <string.h>

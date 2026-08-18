@@ -1,4 +1,4 @@
-# sync-sha: 0810677b72a9ab2852ff80f2af6b5c06aabb95d9a9ce8bf23f663fda6c227063
+# sync-sha: f51960452e7843d448603696402db73098f0c009d71a92e9e0e2c98370d7b98b
 name: Windows build
 
 on:

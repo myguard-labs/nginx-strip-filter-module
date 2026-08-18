@@ -1,4 +1,4 @@
-# sync-sha: 1ae2347978de468843cd3c13a4c66692920eb2534ec3be6149578179eabca497
+# sync-sha: e4762db9053a82af8098f0ba67c624c2a47108871acf5368e346c80c53e87e0a
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy

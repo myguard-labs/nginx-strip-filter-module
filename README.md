@@ -9,20 +9,16 @@
 [![CI Deep](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/ci-deep.yml)
 [![Windows build](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/windows-build.yml/badge.svg)](https://github.com/myguard-labs/nginx-strip-filter-module/actions/workflows/windows-build.yml)
 
-A dynamic nginx response-body minifier. Strips newlines, redundant whitespace
-and comments from HTML, CSS, JavaScript and JSON responses — context-aware, so
-significant bytes are never removed.
+A dynamic nginx response-body minifier for HTML, CSS, JavaScript, JSON, SVG,
+and XML. Its default mode favors semantic safety; the smaller byte-level
+JavaScript and whitespace transforms remain available as an explicit opt-in.
 
-> **Upgrade note:** output is now **more conservative by default.** Four
-> transforms proven to be able to corrupt valid input under some inputs are
-> now opt-in, gated behind `strip_aggressive on;` (default stays `off`):
-> CSS zero-unit stripping (`0px` → `0`, unsafe inside e.g. a media-query
-> feature test), JS whitespace elision between identical operator characters
-> (`+ +`/`- -`), and SVG/XML/HTML text-node whitespace collapsing (unsafe
-> without `xml:space`/`white-space:pre` awareness, which this byte-level
-> filter does not have). If you relied on the previous (pre-upgrade) output,
-> add `strip_aggressive on;` to restore it — every other transform is
-> unaffected and unchanged. See `## Directives` below and `CHANGES`.
+> **Upgrade note:** output is now **more conservative by default.** JavaScript
+> is passed through byte-for-byte because correct minification requires a real
+> lexer/parser. CSS hex shortening and zero-unit stripping, plus HTML/SVG/XML
+> character-data whitespace collapsing, are also opt-in. Set
+> `strip_aggressive on;` to restore the historical byte-level behavior. See
+> `## Directives` below and `CHANGES`.
 
 **See also:** [nginx-strip-filter-module: CSS and JavaScript Minification](https://deb.myguard.nl/nginx-strip-filter-module-css-javascript-minification/) — full write-up, benchmarks and config examples on deb.myguard.nl.
 
@@ -30,24 +26,27 @@ significant bytes are never removed.
 
 | Content type | What is stripped |
 |---|---|
-| `text/html` | `<!-- -->` comments, inter-tag whitespace/newline runs, boolean attrs (`disabled="disabled"` → `disabled`), safe attribute-value unquoting (`class="btn"` → `class=btn`), text-node whitespace collapse (**`strip_aggressive` only**) |
-| `text/css` | `/* */` comments, redundant whitespace, trailing `;` before `}`, leading zeros (`0.5` → `.5`), 6→3-digit hex colors (`#ffaabb` → `#fab`), zero units (`0px` → `0`, **`strip_aggressive` only**) |
-| `application/javascript`, `text/javascript` | `//` and `/* */` comments, safe newline collapse (whitespace between identical operator characters, e.g. `+ +`, kept unless **`strip_aggressive`**) |
+| `text/html` | `<!-- -->` comments, boolean attrs (`disabled="disabled"` → `disabled`), safe attribute-value unquoting (`class="btn"` → `class=btn`); character-data whitespace collapse with **`strip_aggressive` only** |
+| `text/css` | `/* */` comments, redundant whitespace, trailing `;` before `}`, leading zeros (`0.5` → `.5`); 6→3-digit hex colors and zero units with **`strip_aggressive` only** |
+| `application/javascript`, `text/javascript` | byte-identical by default; comment and whitespace removal with **`strip_aggressive` only** |
 | `application/json` | all structural whitespace |
-| `image/svg+xml` | XML comments, inter-tag whitespace (CDATA preserved), text-node whitespace collapse (**`strip_aggressive` only**) |
-| `text/xml`, `application/xml`, `*+xml` | XML comments, inter-tag whitespace (CDATA preserved), text-node whitespace collapse (**`strip_aggressive` only**) — RSS/Atom/sitemap |
+| `image/svg+xml` | XML comments (CDATA preserved); character-data whitespace collapse with **`strip_aggressive` only** |
+| `text/xml`, `application/xml`, `*+xml` | XML comments (CDATA preserved); character-data whitespace collapse with **`strip_aggressive` only** — RSS/Atom/sitemap |
 
 **Smart, not brute:** regions that must survive verbatim are passed through
 untouched:
 
-- HTML `<pre>`, `<textarea>`, `<script>`, `<style>` element bodies
+- HTML `<pre>`, `<textarea>`, `<script>`, `<style>`, `<title>`, `<iframe>`,
+  `<xmp>`, `<noembed>`, and `<noframes>` element bodies
 - CSS and JSON string literals
-- JS string (`'…'`, `"…"`), template (`` `…` ``), and regex (`/…/`) literals
-- JS newlines where Automatic Semicolon Insertion would fire
+- In aggressive JavaScript mode, string, template, and regex literals plus
+  newlines where Automatic Semicolon Insertion would fire
 
 Runs **before** the compression filters so gzip/brotli/zstd compress
-already-minified bytes. Output is always `<=` input length; no extra heap
-allocations beyond a single per-request pooled buffer.
+already-minified bytes. Output is always `<=` input length. Unknown-length or
+chunked responses may occupy roughly twice their body size in request-pool
+memory while buffered (per-chunk snapshots plus one coalesced in-place buffer);
+a known `Content-Length` above `strip_max_size` bypasses before those buffers.
 
 ## Directives
 
@@ -61,9 +60,9 @@ All directives are valid in `http`, `server` and `location` blocks.
 | `strip_json` | `off` | Enable JSON minification |
 | `strip_svg` | `off` | Enable SVG (`image/svg+xml`) minification |
 | `strip_xml` | `off` | Enable XML minification (`text/xml`, `application/xml`, any `+xml` subtype — RSS/Atom/sitemap) |
-| `strip_aggressive` | `off` | Enable four transforms proven to be able to corrupt valid input under some inputs: CSS zero-unit stripping, JS identical-operator whitespace elision, and SVG/XML/HTML text-node whitespace collapse. Off (default) = conservative, byte-preserving for these cases. Restores pre-upgrade output — see the note above `## Features`. |
+| `strip_aggressive` | `off` | Restore the historical byte-level transforms: JavaScript comment/whitespace removal, CSS hex/zero-unit shortening, and HTML/SVG/XML character-data whitespace collapse. These can change valid input; default mode avoids them. |
 | `strip_min_size` | `0` | Skip bodies smaller than this (bytes) |
-| `strip_max_size` | `10m` | Skip bodies larger than this (buffered whole) |
+| `strip_max_size` | `1m` | Skip bodies larger than this (buffered whole) |
 | `strip_types` | `text/html` | Extra MIME types treated as HTML |
 
 ## Quick start
@@ -148,12 +147,11 @@ prove -v ci/t/
 
 ### Coverage
 
-The goal is 100% coverage of `strip_core.c`; the current figure is **99.42%**
-under the unit suite below, with three uncovered lines — `js_regex_allowed()`'s
-trailing-space loop, and the `c == '<'` inter-tag branch in each of
-`strip_html()` and `strip_svg()` — each carrying a comment explaining why the
-current callers cannot reach it. That is the standard: every uncovered line
-either gets a real test or an honest note.
+The goal is 100% coverage of `strip_core.c`; the current figure is **99.81%**
+under the unit suite below. The only uncovered line is
+`js_regex_allowed()`'s defensive trailing-space loop, whose comment explains
+why the current caller cannot reach it. That is the standard: every uncovered
+line either gets a real test or an honest note.
 
 That figure covers `strip_core.c` under `ci/tests/unit/` alone. `ci/tools/coverage.sh`
 reports a lower, whole-project number (it merges the nginx-typed module file and
@@ -168,12 +166,11 @@ grep -n '#####' strip_core.c.gcov     # lines still needing a test or a note
 ```
 
 There is **no coverage-percent gate in CI, by design.** The fastest way to move
-a coverage number is a test that executes lines without asserting anything. The
-gate that matters is the control mutation: every test group in
-`ci/tests/unit/test_scan.c` names, in a comment, a one-line change to `src/strip_core.c`
-that makes that group fail. A test whose control does not red it covers the line
-and proves nothing. Two cases in this suite were caught being vacuous exactly
-that way, and both comments record what the control taught us.
+a coverage number is a test that executes lines without asserting anything.
+Test-group comments record the control mutations used while authoring the
+suite, including two cases that exposed vacuous assertions. CI does not run a
+mutation engine; those controls are review evidence, while exact output,
+negative-control, sanitizer, and fuzz checks are the automated gates.
 
 The method is documented in full at
 [nginx-test-harness/docs/COVERAGE.md](https://github.com/myguard-labs/nginx-test-harness/blob/main/docs/COVERAGE.md)
@@ -279,6 +276,9 @@ load_module modules/ngx_http_strip_filter_module.so;
 - Inline `<script>`/`<style>` bodies in HTML are preserved verbatim; they are
   not recursively minified. Enable `strip_js`/`strip_css` to minify standalone
   `.js`/`.css` files separately.
+- `strip_js on;` is intentionally byte-identical unless `strip_aggressive on;`
+  is also set. The aggressive scanner is retained for compatibility but is not
+  a complete ECMAScript lexer and can change valid programs.
 - Does not handle multi-part or chunked-encoded upstream responses that arrive
   in more than one chain beyond the last buffer — in practice nginx upstream
   modules always set `last_buf` on the final buffer of a response.

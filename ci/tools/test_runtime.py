@@ -409,12 +409,11 @@ _CONCURRENT_CASES = [
     ("text/css", b".b{margin:  0px; }", b".b{margin:0px}"),
     ("application/json", b'{"a": 1, "b": 2}', b'{"a":1,"b":2}'),
     ("application/json", b'{"x": [1, 2, 3]}', b'{"x":[1,2,3]}'),
-    # Text-node whitespace collapse is `strip_aggressive`-only, so a case built
-    # on it would be an identity transform under the default config and would
-    # still "pass" with the filter bypassed entirely. Use inter-tag whitespace,
-    # which is dropped in BOTH modes, so the expectation stays a real oracle.
-    ("text/html", b"<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>", b"<ul><li>a</li><li>b</li></ul>"),
-    ("text/html", b"<div>  <span>x</span>  </div>", b"<div><span>x</span></div>"),
+    # Conservative HTML preserves literal character-data whitespace. Use
+    # comment and boolean-attribute transforms so these remain non-identity
+    # oracles without opting into aggressive whitespace collapse.
+    ("text/html", b"<ul><!--x--><li>a</li><!--y--><li>b</li></ul>", b"<ul><li>a</li><li>b</li></ul>"),
+    ("text/html", b'<div disabled="disabled"><span>x</span><!--x--></div>', b"<div disabled><span>x</span></div>"),
 ]
 
 
@@ -517,13 +516,11 @@ class ReloadUpstream:
     during the reload window has one known-correct expected minified form.
     """
 
-    # Both transforms used here (comment removal, inter-tag whitespace) fire in
-    # BOTH modes, so WANT differs from RAW regardless of `strip_aggressive`.
-    # Text-node collapse is deliberately avoided: it is aggressive-only, so it
-    # would make WANT == RAW under the default config and the reload window
-    # would no longer prove the filter stayed attached across the reload.
+    # Comment removal fires in conservative mode while literal whitespace is
+    # preserved. WANT therefore differs from RAW without relying on the lossy
+    # aggressive path, and proves the filter stayed attached across reload.
     RAW = b"<div>  <p>Hello</p>  <!-- x -->  </div>"
-    WANT = b"<div><p>Hello</p></div>"
+    WANT = b"<div>  <p>Hello</p>    </div>"
 
     def __init__(self, port: int) -> None:
         self.port = port

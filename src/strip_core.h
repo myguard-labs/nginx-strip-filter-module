@@ -36,19 +36,19 @@ typedef enum {
 
 /*
  * In-place-style minifier: reads [src, len), writes to dst (which must have
- * capacity >= len), returns number of bytes written. dst and src must not
- * overlap. Output is never larger than input, in both modes: gating an
+ * capacity >= len), returns number of bytes written. src and dst may be the
+ * same pointer; other partial overlaps are unsupported. Output is never
+ * larger than input, in both modes: gating an
  * aggressive transform behind STRIP_F_AGGRESSIVE only ever emits MORE bytes
  * than the aggressive path would, and the conservative path never emits more
  * than input.
  *
- * By default (flags == 0) the transform is conservative: it collapses runs of
- * \r\n\t and spaces and strips comments only where doing so cannot change
- * rendered/parsed meaning. Regions that must survive verbatim (HTML
- * <pre>/<textarea>/<script>/<style> bodies, JS/CSS/JSON string + template +
- * regex literals) are copied through untouched. Passing STRIP_F_AGGRESSIVE
- * enables additional transforms that are NOT guaranteed to preserve meaning
- * on all valid input.
+ * By default (flags == 0) the transform is conservative. JavaScript is copied
+ * byte-for-byte because safe minification requires a real lexer/parser. HTML,
+ * SVG, and XML preserve character-data whitespace; their comments are removed
+ * without synthesizing text. Passing STRIP_F_AGGRESSIVE enables the historical
+ * byte-level transforms that are NOT guaranteed to preserve meaning on all
+ * valid input.
  */
 size_t strip_minify(strip_kind_t kind,
                     const unsigned char *src, size_t len,

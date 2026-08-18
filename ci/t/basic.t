@@ -1,4 +1,5 @@
 use Test::Nginx::Socket 'no_plan';
+our $UpstreamPort = ($ENV{TEST_NGINX_PORT} || 19880) + 1;
 run_tests();
 
 __DATA__
@@ -10,7 +11,8 @@ __DATA__
     default_type text/html;
 --- request
 GET /
---- response_body: <html><body><p>Hello   world</p></body></html>
+--- response_body eval
+qq(<html>\n  <body>\n    \n    <p>Hello   world</p>\n  </body>\n</html>)
 --- no_error_log
 [error]
 
@@ -29,6 +31,7 @@ GET /
 === TEST 2: HTML <pre> body preserved verbatim
 --- config
     strip on;
+    strip_aggressive on;
     return 200 "<div>\n<pre>keep\n  all   spaces\n</pre>\n</div>\n";
     default_type text/html;
 --- request
@@ -43,6 +46,7 @@ GET /
 === TEST 3: HTML <textarea> body preserved
 --- config
     strip on;
+    strip_aggressive on;
     return 200 "<form>\n<textarea>\nhello   world\n</textarea>\n</form>\n";
     default_type text/html;
 --- request
@@ -57,6 +61,7 @@ hello   world
 === TEST 4: HTML <script> body preserved verbatim
 --- config
     strip on;
+    strip_aggressive on;
     return 200 "<html>\n<script>\nvar x = 1;\n// comment\n</script>\n</html>\n";
     default_type text/html;
 --- request
@@ -72,6 +77,7 @@ var x = 1;
 === TEST 5: HTML <style> body preserved verbatim
 --- config
     strip on;
+    strip_aggressive on;
     return 200 "<html>\n<style>\nbody {\n  color: red;\n}\n</style>\n</html>\n";
     default_type text/html;
 --- request
@@ -111,6 +117,7 @@ body{color:red;margin:0}
 === TEST 8: JS line + block comments stripped, ASI newline preserved
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "function f() {\n  var a = 1 // line\n  return a /* blk */ + 2\n}\n";
     default_type application/javascript;
 --- request
@@ -124,6 +131,7 @@ return a+2}
 === TEST 9: JS string literal preserved (no stripping inside)
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "var s = 'a  b\\nc';\nvar t = 1;\n";
     default_type application/javascript;
 --- request
@@ -136,6 +144,7 @@ var s='a  b\nc';var t=1;
 === TEST 10: JS regex literal preserved
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "var re = /a\\/b/g\nvar y = 10 / 2\n";
     default_type application/javascript;
 --- request
@@ -212,6 +221,7 @@ GET /
 === TEST 16: text/javascript also stripped by strip_js
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "var x = 1; // comment\nvar y = 2;\n";
     default_type text/javascript;
 --- request
@@ -309,6 +319,7 @@ div{margin:0;padding:0;top:0;font-size:10px}
 === TEST 22: CSS #rrggbb collapsed to #rgb
 --- config
     strip_css on;
+    strip_aggressive on;
     return 200 "a { color: #ffaabb; background: #aabbcc; border-color: #112233; }\n";
     default_type text/css;
 --- request
@@ -355,6 +366,7 @@ GET /
 === TEST 26: SVG comment stripped and whitespace collapsed
 --- config
     strip_svg on;
+    strip_aggressive on;
     return 200 '<svg xmlns="http://www.w3.org/2000/svg">
   <!-- title -->
   <circle r="5" />
@@ -371,6 +383,7 @@ GET /
 === TEST 27: SVG CDATA preserved verbatim
 --- config
     strip_svg on;
+    strip_aggressive on;
     return 200 '<svg>
   <script><![CDATA[  var x = 1;  ]]></script>
 </svg>
@@ -487,6 +500,7 @@ GET /
 === TEST 36: XML (application/xml) comment + whitespace stripped
 --- config
     strip_xml on;
+    strip_aggressive on;
     return 200 '<?xml version="1.0"?>
 <root>
   <!-- c -->
@@ -504,6 +518,7 @@ GET /
 === TEST 37: RSS (application/rss+xml) matched via +xml suffix
 --- config
     strip_xml on;
+    strip_aggressive on;
     return 200 '<rss>
   <channel>
     <title>T</title>
@@ -532,6 +547,7 @@ GET /
 === TEST 39: strip_xml matches +xml with charset parameter
 --- config
     strip_xml on;
+    strip_aggressive on;
     return 200 '<a>  <b/>  </a>';
     default_type "application/atom+xml; charset=utf-8";
 --- request
@@ -669,6 +685,7 @@ GET /
 === TEST 51: pure inter-tag whitespace is still dropped
 --- config
     strip on;
+    strip_aggressive on;
     return 200 "<ul>\n  <li>a</li>\n  <li>b</li>\n</ul>";
     default_type text/html;
 --- request
@@ -695,6 +712,7 @@ GET /
 === TEST 53: JS regex after return keyword keeps the slash as regex
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "function f(x){\n  return /a b/.test(x);\n}";
     default_type application/javascript;
 --- request
@@ -708,6 +726,7 @@ GET /
 === TEST 54: JS division after identifier stays division (no false regex)
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "var y = a / b / c;";
     default_type application/javascript;
 --- request
@@ -747,6 +766,7 @@ GET /
 === TEST 57: JS keeps ASI newline before a string literal (return\n"x")
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "function f(){\n  return\n  \"ok\"\n}";
     default_type application/javascript;
 --- request
@@ -762,6 +782,7 @@ function f(){return
 === TEST 58: JS keeps ASI newline before a regex literal (return\n/re/)
 --- config
     strip_js on;
+    strip_aggressive on;
     return 200 "function f(x){\n  return\n  /a/.test(x)\n}";
     default_type application/javascript;
 --- request
@@ -843,5 +864,115 @@ GET /
 --- request
 GET /
 --- response_body: {"a":1,"b":2}
+--- no_error_log
+[error]
+
+=== TEST 65: conservative JavaScript is byte-identical
+--- config
+    strip_js on;
+    return 200 "if (true) /a  b/.test(x); 1 .toString();";
+    default_type application/javascript;
+--- request
+GET /
+--- response_body chomp: if (true) /a  b/.test(x); 1 .toString();
+--- response_headers_like
+Content-Length: ^[1-9][0-9]*$
+--- no_error_log
+[error]
+
+=== TEST 66: conservative HTML preserves inline element separator
+--- config
+    strip on;
+    return 200 "<span>a</span> <span>b</span>";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <span>a</span> <span>b</span>
+--- no_error_log
+[error]
+
+=== TEST 67: HTML comment removal does not synthesize text
+--- config
+    strip on;
+    return 200 "<p>a<!-- c -->b</p>";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <p>ab</p>
+--- no_error_log
+[error]
+
+=== TEST 68: strip_types selects a custom HTML content type
+--- config
+    strip on;
+    strip_types text/plain;
+    return 200 "<p id=\"x\"><!-- c -->hello</p>";
+    default_type text/plain;
+--- request
+GET /
+--- response_body chomp: <p id=x>hello</p>
+--- no_error_log
+[error]
+
+=== TEST 69: known body above strip_max_size bypasses byte-identically
+--- config
+    strip on;
+    strip_max_size 1;
+    return 200 "<p id=\"x\"><!-- c -->hello</p>";
+    default_type text/html;
+--- request
+GET /
+--- response_body chomp: <p id="x"><!-- c -->hello</p>
+--- no_error_log
+[error]
+
+=== TEST 70: non-identity Content-Encoding bypasses byte-identically
+--- http_config eval
+qq{
+    server {
+        listen 127.0.0.1:$::UpstreamPort;
+        location /encoded {
+            add_header Content-Encoding br always;
+            default_type text/html;
+            return 200 '<p id="x"><!-- c -->hello</p>';
+        }
+    }
+}
+--- config eval
+qq{
+    location = /encoded {
+        strip on;
+        proxy_pass http://127.0.0.1:$::UpstreamPort/encoded;
+    }
+}
+--- request
+GET /encoded
+--- response_body chomp: <p id="x"><!-- c -->hello</p>
+--- no_error_log
+[error]
+
+=== TEST 71: transformed response weakens a strong ETag
+--- http_config eval
+qq{
+    server {
+        listen 127.0.0.1:$::UpstreamPort;
+        location /etag {
+            add_header ETag '"strong"' always;
+            default_type application/json;
+            return 200 '{ "a": 1 }';
+        }
+    }
+}
+--- config eval
+qq{
+    location = /etag {
+        strip_json on;
+        proxy_pass http://127.0.0.1:$::UpstreamPort/etag;
+    }
+}
+--- request
+GET /etag
+--- response_headers_like
+ETag: ^W/"strong"$
 --- no_error_log
 [error]

@@ -8,22 +8,17 @@
 #   ci/tools/bump-versions.sh [--dry-run]
 #
 # Two things move here:
-#   - .github/versions.env    -- nginx mainline version + its sha256, rewritten
-#                                 wholesale by .github/scripts/compute-versions.sh
+#   - .github/versions.env    -- nginx mainline/stable and Angie versions plus
+#                                 sha256, rewritten by compute-versions.sh
 #   - GitHub Action sha pins  -- ci/tools/bump-actions.sh (sha + the tag comment
 #                                 beside it, as one unit)
 #
 # Adapted from nginx-skeleton-module's bump-versions.sh. Deliberately dropped
 # from the reference:
-#   - nginx stable + angie pins -- no workflow in this repo builds either
-#     flavor/matrix cell (single-version-only, see versions.env header); a
-#     pin nothing reads is dead weight, not coverage.
 #   - pinned-linter bumping (bump-tools.sh) -- this repo's scanners
-#     (security-scanners.yml) install semgrep/flawfinder/clang-tidy from
-#     apt/pipx unpinned, there is no ci/linter/ tree and no `pkg==version`
-#     literal anywhere to move. Porting bump-tools.sh would bump nothing and
-#     silently look like coverage; adding a version pin for those tools is a
-#     policy change out of this card's scope, not a bump.
+#     use one centrally pinned Python tool (Semgrep) plus distribution tools.
+#     Semgrep moves through reviewed dependency PRs; there is no multi-tool
+#     manifest for bump-tools.sh to maintain here.
 #   - vendored nginx-tests submodule update -- this repo has no such submodule
 #     (ci/t/ is native Test::Nginx, not a vendored copy).
 #

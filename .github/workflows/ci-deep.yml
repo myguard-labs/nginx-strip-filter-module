@@ -1,4 +1,4 @@
-# sync-sha: ecb090d05858aff6389c8162093ca01847eedf291e8307a3d8d5fdafb35b8b06
+# sync-sha: 9837ffef06ef47f790f7022b74b159e03eeab2681967d93d6683b41207c67e18
 name: CI Deep
 
 # Exhaustive dynamic analysis. Monthly cron + on-demand ONLY -- never on a PR.
@@ -28,8 +28,8 @@ name: CI Deep
 # someone is actually going to act on it -- an unread alert is worse than none.
 #
 # Action pins (keep in sync with build-test.yml):
-# actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
-# actions/upload-artifact@v5 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
+# actions/checkout@v5.1.0        -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+# actions/upload-artifact@v5.0.0 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -47,7 +47,8 @@ on:
         default: "3600"
 
 concurrency:
-  group: ci-deep-${{ github.workflow }}-${{ github.ref }}
+  # A manual diagnostic run must not cancel the monthly soak (or vice versa).
+  group: ci-deep-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -90,7 +91,7 @@ jobs:
             port: '19648'
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -209,7 +210,7 @@ jobs:
     timeout-minutes: 600
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -296,7 +297,7 @@ jobs:
       TEST_BASE_PORT: '19328'
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -410,7 +411,7 @@ jobs:
       TEST_BASE_PORT: '19392'
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -515,7 +516,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -530,9 +531,9 @@ jobs:
           # system Python on the Ubuntu 24.04 self-hosted runner). Fall back to a
           # user pip install with --break-system-packages if pipx is unavailable.
           if command -v pipx >/dev/null; then
-            pipx install --quiet semgrep
+            pipx install --quiet "semgrep==$SEMGREP_VERSION"
           else
-            pip3 install --quiet --user --break-system-packages semgrep
+            pip3 install --quiet --user --break-system-packages "semgrep==$SEMGREP_VERSION"
           fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
@@ -620,7 +621,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 

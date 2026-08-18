@@ -1,4 +1,4 @@
-# sync-sha: bbcfccb7710a82c6069fba1d2941c5e308c603519e205a3f2817d01c16909af1
+# sync-sha: b59998383e2685a0f6d85964660421dfd6387f791afcd804de8b7516ba4da8ca
 name: Bump versions
 
 # Weekly: check nginx.org for a newer mainline release than what's pinned,
@@ -12,11 +12,10 @@ name: Bump versions
 # BUMP_PR_TOKEN (a classic PAT -- the default GITHUB_TOKEN cannot create
 # PRs on myguard-labs repos). Normal review/required-checks gate the merge.
 #
-# BUMP_PR_TOKEN authenticates BOTH halves: gh (via GH_TOKEN) for the PR, and
-# git (via GIT_ASKPASS) for the branch push.
+# BUMP_PR_TOKEN authenticates gh for both the signed GraphQL commit and the PR.
 #
 # Action pins (keep in sync with build-test.yml):
-# actions/checkout@v5 -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
+# actions/checkout@v5.1.0 -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 #
 # NOT a PR-lane member: schedule + workflow_dispatch only, never called from
 # ci.yml. It runs unattended against master (not a PR head), needs write
@@ -44,7 +43,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -63,7 +62,6 @@ jobs:
       - name: Open PR if anything changed
         env:
           GH_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
-          BUMP_PR_TOKEN: ${{ secrets.BUMP_PR_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain)" ]; then
@@ -71,36 +69,51 @@ jobs:
             exit 0
           fi
           branch="bump/versions-$(date -u +%Y%m%d)"
-          git config user.name "myguard-bump-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add -A
-          git commit -m "chore: bump nginx/action pins
+          repo="${GITHUB_REPOSITORY}"
+          base="$(git rev-parse HEAD)"
 
-          Automated weekly version check (ci/tools/bump-versions.sh)."
-          # persist-credentials is false, so the checkout leaves no git
-          # credential behind and a plain `git push` prompts for a username.
-          # GH_TOKEN authenticates gh but not git, so hand git its own
-          # credential via the askpass helper -- keeps the token out of argv
-          # and out of .git/config, unlike an inline x-access-token@ URL.
-          git config credential.helper ''
-          askpass="$(mktemp)"
-          cat > "$askpass" <<'ASKPASS'
-          #!/bin/sh
-          case "$1" in
-            Username*) echo x-access-token ;;
-            *) printf '%s' "$BUMP_PR_TOKEN" ;;
-          esac
-          ASKPASS
-          chmod 700 "$askpass"
-          # Force-push: the branch name is date-based, so a same-day re-run
-          # (a manual dispatch, or a retry after a failure) collides with the
-          # branch the earlier run created and is otherwise rejected
-          # non-fast-forward. The branch is bot-owned and disposable.
-          GIT_ASKPASS="$askpass" git push --force-with-lease origin "$branch"
-          rm -f "$askpass"
+          # GraphQL's createCommitOnBranch signs commits with GitHub's key.
+          # Reset a same-day bot branch to the checked-out master, or create it.
+          if ! gh api --method PATCH "repos/$repo/git/refs/heads/$branch" \
+              -f sha="$base" -F force=true >/dev/null 2>&1; then
+            gh api --method POST "repos/$repo/git/refs" \
+              -f ref="refs/heads/$branch" -f sha="$base" >/dev/null
+          fi
+
+          additions='[]'
+          deletions='[]'
+          while IFS=$'\t' read -r status path; do
+            case "$status" in
+              D)
+                deletions="$(jq --arg path "$path" '. + [{path: $path}]' <<<"$deletions")"
+                ;;
+              *)
+                contents="$(base64 -w0 < "$path")"
+                additions="$(jq --arg path "$path" --arg contents "$contents" \
+                  '. + [{path: $path, contents: $contents}]' <<<"$additions")"
+                ;;
+            esac
+          done < <(git diff --no-renames --name-status HEAD)
+
+          payload="$(jq -n \
+            --arg query 'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid url signature { isValid } } } }' \
+            --arg repo "$repo" --arg branch "$branch" --arg base "$base" \
+            --argjson additions "$additions" --argjson deletions "$deletions" \
+            '{query: $query, variables: {input: {
+              branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+              expectedHeadOid: $base,
+              message: {headline: "chore: bump nginx/action pins", body: "Automated weekly version check (ci/tools/bump-versions.sh)."},
+              fileChanges: {additions: $additions, deletions: $deletions}
+            }}}')"
+          response="$(printf '%s' "$payload" | gh api graphql --input -)"
+          jq -e '.data.createCommitOnBranch.commit.signature.isValid == true' \
+            <<<"$response" >/dev/null || {
+              echo "::error::GitHub did not report a valid signature for the bump commit" >&2
+              exit 1
+            }
+
           # An open PR for this branch may already exist from that earlier
-          # run; the push above has refreshed it, so there is nothing to do.
+          # run; the signed commit above has refreshed it, so there is nothing to do.
           if [ -n "$(gh pr list --head "$branch" --state open --json number -q '.[0].number')" ]; then
             echo "PR for $branch already open, refreshed by the push"
             exit 0

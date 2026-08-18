@@ -3,10 +3,17 @@
 set -euo pipefail
 
 FLAVOR="${1:-nginx}"
-VERSION="${2:-1.31.1}"
 MODE="${3:-debug}"
 ROOT="${BUILD_ROOT:-$PWD/.build}"
 MODULE_DIR="$PWD"
+if [ -n "${2:-}" ]; then
+    VERSION="$2"
+elif [ "$FLAVOR" = "nginx" ] && [ -f "$MODULE_DIR/.github/versions.env" ]; then
+    VERSION="$(grep -m1 '^NGINX_VERSION=' "$MODULE_DIR/.github/versions.env" | cut -d= -f2-)"
+else
+    echo "version is required for flavor $FLAVOR" >&2
+    exit 2
+fi
 
 # coverage gets its own tree, never shared with debug/asan/module: gcov
 # instruments objects in place, and a tree also used by another mode would

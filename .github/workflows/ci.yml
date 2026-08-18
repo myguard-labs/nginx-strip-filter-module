@@ -1,4 +1,4 @@
-# sync-sha: e4d2e0fb909e705215d0a598e746f8569ca532266c764c224d4770d04695b383
+# sync-sha: 6bfb4745d2c0c2cbe25ce452c255ff2e7d65416c394243f53d153019eaac916e
 name: CI
 
 # Single entry point for the PR suite.
@@ -82,7 +82,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: "Assert documented lane map matches needs: graph"

@@ -219,9 +219,12 @@ jobs:
           sudo apt-get install -y clang
 
       - name: Select fuzz duration
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "FUZZ_SECS=${{ github.event.inputs.fuzz_seconds }}" >> "$GITHUB_ENV"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "FUZZ_SECS=$INPUT_FUZZ_SECONDS" >> "$GITHUB_ENV"
           else
             echo "FUZZ_SECS=3600" >> "$GITHUB_ENV"
           fi
@@ -589,9 +592,10 @@ jobs:
           exit "$status"
       - name: semgrep
         run: |
-          semgrep scan --config p/c --config p/security-audit \
+          semgrep scan --jobs=1 --config p/c --config p/security-audit \
+            --severity=WARNING --severity=ERROR --error \
             "$GITHUB_WORKSPACE/src/strip_core.c" \
-            "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" 2>&1 | tee semgrep.log || true
+            "$GITHUB_WORKSPACE/src/ngx_http_strip_filter_module.c" 2>&1 | tee semgrep.log
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

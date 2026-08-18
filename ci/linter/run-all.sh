@@ -6,12 +6,11 @@
 # this repo or in the referenced skeleton to port verbatim, so this wraps the
 # linters .github/workflows/security-scanners.yml and build-test.yml already
 # gate PRs on, mirrored rather than invented. Thresholds match CI except where
-# noted below: semgrep is deliberately STRICTER here than in CI, which runs it
-# report-only. Do not "fix" that by loosening this script or by dropping the
-# `|| true` in the workflows -- local-strict/CI-advisory is the intended shape.
+# noted below. Scanner thresholds must stay identical between local and CI
+# gates so a local pass predicts the remote result.
 #
 #   flawfinder      fails at level >=4        (security-scanners.yml "flawfinder")
-#   semgrep         gates locally at WARNING; report-only in CI (security-scanners.yml, ci-deep.yml)
+#   semgrep         fails at WARNING           (security-scanners.yml, ci-deep.yml)
 #   the SC-lint     fails at severity warning (mirrors .pre-commit-config.yaml floor)
 #   actionlint      default severity          (build-test.yml "Lint workflows")
 #
@@ -78,7 +77,7 @@ echo "== semgrep (gate on >=WARNING) =="
 # means semgrep itself failed (bad config, missing ruleset fetch, etc) and
 # must not silently fold into the same "status=1" bucket as a real finding.
 semgrep_rc=0
-semgrep scan --config p/c --config p/security-audit \
+semgrep scan --jobs=1 --config p/c --config p/security-audit \
   --severity=WARNING --severity=ERROR --error \
   src/*.c || semgrep_rc=$?
 if [ "$semgrep_rc" -eq 1 ]; then
@@ -113,7 +112,8 @@ else
 fi
 
 echo "== actionlint (workflow syntax) =="
-if ! env SHELLCHECK_OPTS=-Swarning actionlint -ignore 'label ".+" is unknown' .github/workflows/*.yml; then
+if ! env SHELLCHECK_OPTS=-Swarning actionlint \
+  -config-file .github/actionlint.yaml .github/workflows/*.yml; then
   echo "run-all.sh: actionlint finding" >&2
   status=1
 fi

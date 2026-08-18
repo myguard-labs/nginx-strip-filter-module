@@ -1,0 +1,20 @@
+# yamllint config for nginx-strip-filter-module -- used by editor integration
+# and release linting, so both agree.
+#
+# GitHub Actions workflows are not prose YAML; three default rules fight their
+# syntax rather than catching bugs:
+#   document-start  adding --- to every workflow is churn with no reader value.
+#   truthy          `on:` is a trigger key, not a boolean. Values stay checked.
+#   line-length     inline shell and ${{ }} expressions legitimately run long.
+#                   120 remains visible as a warning, but does not block.
+extends: default
+
+rules:
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  line-length:
+    max: 120
+    level: warning

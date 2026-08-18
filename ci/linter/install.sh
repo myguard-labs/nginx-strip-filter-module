@@ -15,6 +15,10 @@
 # Idempotent: safe to re-run. Exits 0 on success, non-zero if apt/pipx fail.
 set -euo pipefail
 
+# Repository-owned KEY=value pin file.
+# shellcheck disable=SC1091
+source .github/versions.env
+
 need_apt=()
 command -v flawfinder >/dev/null 2>&1 || need_apt+=(flawfinder)
 command -v clang-tidy >/dev/null 2>&1 || need_apt+=(clang-tidy)
@@ -27,18 +31,18 @@ if [ "${#need_apt[@]}" -gt 0 ]; then
   sudo apt-get install -y "${need_apt[@]}"
 fi
 
-if ! command -v semgrep >/dev/null 2>&1; then
-  echo "install.sh: installing semgrep via pipx" >&2
+installed_semgrep="$(semgrep --version 2>/dev/null | head -1 || true)"
+if [ "$installed_semgrep" != "$SEMGREP_VERSION" ]; then
+  echo "install.sh: installing semgrep==$SEMGREP_VERSION via pipx" >&2
   if command -v pipx >/dev/null 2>&1; then
-    pipx install --quiet semgrep
+    pipx install --quiet --force "semgrep==$SEMGREP_VERSION"
   else
-    pip3 install --quiet --user --break-system-packages semgrep
+    pip3 install --quiet --user --break-system-packages --upgrade \
+      "semgrep==$SEMGREP_VERSION"
   fi
 fi
 
-# ruff lints ci/tools/*.py -- pinned (unlike semgrep's rolling install above)
-# because this is a fresh addition with no existing unpinned precedent to
-# match; a new gate should not start unreproducible.
+# ruff lints ci/tools/*.py and is pinned for reproducibility.
 if ! command -v ruff >/dev/null 2>&1; then
   echo "install.sh: installing ruff via pipx" >&2
   if command -v pipx >/dev/null 2>&1; then

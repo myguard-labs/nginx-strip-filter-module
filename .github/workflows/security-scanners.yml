@@ -1,4 +1,4 @@
-# sync-sha: e4762db9053a82af8098f0ba67c624c2a47108871acf5368e346c80c53e87e0a
+# sync-sha: 8ed99b8438503cc8b98fb96eeec514dd7ad49a0aab56d0569d65bca60c8577bf
 name: Security scanners
 
 # Static / security scanners gate on every PR/push — flawfinder, clang-tidy
@@ -6,15 +6,12 @@ name: Security scanners
 # ci-deep.yml scanners job, promoted to a PR gate.
 #
 # Action pins (keep in sync with build-test.yml header):
-# actions/checkout@v5        -> 93cb6efe18208431cddfb8368fd83d5badbf9bfd
-# actions/upload-artifact@v5 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
-# actions/cache@v4           -> 0057852bfaa89a56745cba8c7296529d2fc39830
+# actions/checkout@v5.1.0        -> fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+# actions/upload-artifact@v5.0.0 -> 330a01c490aca151604b8cf639adc76d48f6c5d4
+# actions/cache@v4.3.0           -> 0057852bfaa89a56745cba8c7296529d2fc39830
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # The scanners job configures a real nginx source tree for clang-tidy headers.
-  NGINX_VERSION: "1.31.1"
-  NGINX_VERSION_SHA256: "9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc"
 
 on:
   # Triggered by ci.yml, which lanes the PR suite so peak runner use stays
@@ -36,9 +33,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Load pinned versions
+        run: bash .github/scripts/load-versions.sh
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -47,10 +46,10 @@ jobs:
           # system Python on the Ubuntu 24.04 self-hosted runner). Fall back to a
           # user pip install with --break-system-packages if pipx is unavailable.
           if command -v pipx >/dev/null; then
-            pipx install --quiet semgrep
+            pipx install --quiet "semgrep==$SEMGREP_VERSION"
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           else
-            pip3 install --quiet --user --break-system-packages semgrep
+            pip3 install --quiet --user --break-system-packages "semgrep==$SEMGREP_VERSION"
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
       # Keyed on version+sha256, matching every other tarball cache in this
@@ -135,9 +134,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout module
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Load pinned versions
+        run: bash .github/scripts/load-versions.sh
       - name: Install linters
         run: |
           bash ci/linter/install.sh

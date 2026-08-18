@@ -107,7 +107,7 @@ make modules
 Or use `ci/tools/ci-build.sh` which downloads and builds nginx automatically:
 
 ```bash
-bash ci/tools/ci-build.sh nginx 1.31.1
+bash ci/tools/ci-build.sh
 ```
 
 ### Windows
@@ -187,6 +187,7 @@ and [COVERAGE-HOWTO.md](https://github.com/myguard-labs/nginx-test-harness/blob/
 ├── src/                       # the module: nginx glue + the nginx-independent core
 │   ├── ngx_http_strip_filter_module.c
 │   ├── strip_core.c           # (u_char*, size_t) in, verdict out — no nginx types
+│   ├── strip_core_nginx_win32.c # native Windows precompiled-header adapter
 │   └── strip_core.h
 ├── ci/
 │   ├── tests/unit/            # standalone unit suite, drives strip_core.c directly
@@ -210,7 +211,7 @@ never drift apart — see [ci/linter/README.md](ci/linter/README.md).
 
 | Workflow | Trigger | Gates |
 |---|---|---|
-| `ci.yml` | PR (the only `pull_request` entry point) | no gates of its own — lanes and dispatches every PR-time member below |
+| `ci.yml` | PR (the only Linux `pull_request` entry point) | no gates of its own — lanes and dispatches every Linux PR-time member below |
 | `build-test.yml` | PR (via `ci.yml`) | build, Test::Nginx, ASan+UBSan, `unit-core` job (gcc+clang unit run of `ci/tests/unit/test_scan.c` against `src/strip_core.c` standalone, plus an ASan/UBSan unit run and an informational coverage report), `ci/tools/sync-stamp.sh --check` |
 | `security-scanners.yml` | PR (via `ci.yml`) | flawfinder, clang-tidy, semgrep over the module sources |
 | `fuzzing.yml` | PR (via `ci.yml`) | 20s/target fast fuzz regression across all 6 strip kinds (html/css/js/json/svg/xml) |

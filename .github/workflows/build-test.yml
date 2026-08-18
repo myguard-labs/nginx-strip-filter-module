@@ -1,10 +1,8 @@
-# sync-sha: cf483082dfc79202e367ac3849b430d1db1a69cacdadd3e388e2479cd2079e40
+# sync-sha: ccc242199ccaf3ed0fb8d6378c0e1259149af8a0758b058a434e6e25ea829d5d
 name: Build and Test
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NGINX_VERSION: "1.31.1"
-  NGINX_VERSION_SHA256: "9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4bc"
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 on:
@@ -27,7 +25,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install validation tools
         run: |
@@ -36,8 +36,13 @@ jobs:
 
       - name: Validate scripts and source
         run: |
-          bash -n ci/tools/ci-build.sh
-          shellcheck ci/tools/ci-build.sh ci/tools/sync-stamp.sh
+          bash -n ci/tools/ci-build.sh .github/scripts/compute-versions.sh \
+            ci/tools/bump-actions.sh ci/tools/bump-versions.sh \
+            ci/tests/tools/test-bump-actions.sh
+          shellcheck ci/tools/ci-build.sh ci/tools/sync-stamp.sh \
+            .github/scripts/compute-versions.sh ci/tools/bump-actions.sh \
+            ci/tools/bump-versions.sh ci/tests/tools/test-bump-actions.sh
+          bash ci/tests/tools/test-bump-actions.sh
           # Each stamped .github/ file carries a `# sync-sha:` of its own
           # content, so a `--list` diff against nginx-skeleton-module names
           # exactly which copies have drifted. The stamps are only worth
@@ -68,7 +73,7 @@ jobs:
           /tmp/actionlint -color .github/workflows/*.yml
 
   build:
-    name: Build (${{ matrix.flavor }} ${{ matrix.version }} / ${{ matrix.cc }})
+    name: Build (${{ matrix.flavor }} mainline / ${{ matrix.cc }})
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","builder02","lxc"]') }}
     timeout-minutes: 30
     strategy:
@@ -76,12 +81,16 @@ jobs:
       matrix:
         include:
           - flavor: nginx
-            version: "1.31.1"
             cc: gcc
             primary: true
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Load pinned versions
+        run: bash .github/scripts/load-versions.sh
 
       - name: Install build dependencies
         run: |
@@ -95,8 +104,8 @@ jobs:
       - name: Cache source tarball
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: .build/${{ matrix.flavor }}-${{ matrix.version }}.tar.gz
-          key: src-${{ matrix.flavor }}-${{ matrix.version }}-${{ env.NGINX_VERSION_SHA256 }}
+          path: .build/${{ matrix.flavor }}-${{ env.NGINX_VERSION }}.tar.gz
+          key: src-${{ matrix.flavor }}-${{ env.NGINX_VERSION }}-${{ env.NGINX_VERSION_SHA256 }}
 
       # Hybrid: self-hosted runner disk (~/.ccache under CCACHE_DIR) persists
       # naturally between jobs; actions/cache is the fallback for the fork
@@ -104,18 +113,18 @@ jobs:
       # sources + configure flags via ci-build.sh's own CC_OPT string, so a
       # flag or source change invalidates instead of serving stale objects;
       # no restore-keys prefix (never partial-match a build tree).
-      - name: Cache ccache (${{ matrix.flavor }} ${{ matrix.version }} / ${{ matrix.cc }})
+      - name: Cache ccache (${{ matrix.flavor }} / ${{ matrix.cc }})
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.flavor }}-${{ matrix.version }}-${{ matrix.cc }}-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
+          key: ccache-${{ matrix.flavor }}-${{ env.NGINX_VERSION }}-${{ matrix.cc }}-${{ hashFiles('src/**', 'ci/tools/ci-build.sh') }}
 
       - name: Build server and dynamic module
         env:
           CC: ${{ matrix.cc }}
         run: |
-          bash ci/tools/ci-build.sh "${{ matrix.flavor }}" "${{ matrix.version }}"
-          build=".build/${{ matrix.flavor }}-${{ matrix.version }}/objs"
+          bash ci/tools/ci-build.sh "${{ matrix.flavor }}" "$NGINX_VERSION"
+          build=".build/${{ matrix.flavor }}-${NGINX_VERSION}/objs"
           test -f "$build/ngx_http_strip_filter_module.so"
 
       - name: ccache stats
@@ -124,7 +133,7 @@ jobs:
 
       - name: Strict module compile
         run: |
-          build=".build/${{ matrix.flavor }}-${{ matrix.version }}"
+          build=".build/${{ matrix.flavor }}-${NGINX_VERSION}"
           cflags=$(awk '/^CFLAGS[[:space:]]*=/{sub(/^CFLAGS[[:space:]]*=[[:space:]]*/,""); print; exit}' "$build/objs/Makefile")
           incs=$(awk '/^ALL_INCS[[:space:]]*=/{found=1} found{line=$0; sub(/^ALL_INCS[[:space:]]*=[[:space:]]*/,"",line); continued=(line ~ /\\$/); gsub(/\\$/, "", line); printf "%s ", line; if (!continued) exit}' "$build/objs/Makefile")
           # shellcheck disable=SC2086
@@ -166,7 +175,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
@@ -225,7 +236,9 @@ jobs:
       TEST_BASE_PORT: '19200'
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Download nginx artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5

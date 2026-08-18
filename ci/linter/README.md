@@ -11,7 +11,7 @@ separate, overlapping gate — see "Two overlapping local gates" below.
 
 | File | Covers | Gate |
 |---|---|---|
-| `install.sh` | — | installs every tool `run-all.sh` needs: apt (flawfinder, clang-tidy, shellcheck, cppcheck) → pipx/pip3 (semgrep, `ruff==0.16.1`) → pinned checksummed binary (actionlint) |
+| `install.sh` | — | installs every tool `run-all.sh` needs: apt (flawfinder, clang-tidy, shellcheck, cppcheck) → pipx/pip3 (version-pinned semgrep, `ruff==0.16.1`) → pinned checksummed binary (actionlint) |
 | `run-all.sh` | `src/*.c`, `*.sh`/`.githooks/*`, `.github/workflows/*.yml`, `*.py` | runs every checker below, reports once |
 | `lint-ci-ports.sh` | `.github/workflows/*.yml` | every runtime-bearing job (runs `prove -v ci/t/` and/or `ci/tools/test_runtime.py`) declares `TEST_BASE_PORT` before its first runtime step |
 | `lint-docs-drift.sh` | `.github/workflows/*.yml`, `README.md` | every workflow under `.github/workflows/` has a row in README's `## CI` table, and every table row names a workflow that exists — both directions |

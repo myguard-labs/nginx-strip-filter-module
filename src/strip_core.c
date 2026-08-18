@@ -1,13 +1,15 @@
 /*
  * strip_core.c - ngx-independent content minifier core.
  *
- * See strip_core.h for the contract. Four state machines:
- *   - HTML: collapse inter-tag whitespace, strip comments, preserve the bodies
- *           of <pre> <textarea> <script> <style>.
+ * See strip_core.h for the contract. The format handlers are:
+ *   - HTML: strip comments and simplify safe attributes; aggressive mode also
+ *           collapses character-data whitespace. Raw/RCDATA bodies survive.
  *   - CSS:  strip block comments, collapse whitespace, trim around { } : ; ,.
- *   - JS:   strip line and block comments, collapse newlines with ASI safety,
- *           preserve string/template/regex literals.
+ *   - JS:   byte-identical by default; aggressive mode runs the legacy
+ *           comment/whitespace scanner.
  *   - JSON: strip every whitespace byte outside string literals.
+ *   - SVG/XML: strip comments, preserve CDATA, and collapse character data
+ *              only in aggressive mode.
  *
  * Output is always <= input length, so callers size dst == input length.
  */
@@ -311,8 +313,9 @@ strip_css(const unsigned char *src, size_t len, unsigned char *dst,
             pending_space = 0;
         }
 
-        /* #rrggbb → #rgb */
-        if (c == '#') {
+        /* #rrggbb → #rgb. A byte scanner cannot distinguish a color value
+         * from an ID selector, where shortening changes the match. */
+        if (c == '#' && (flags & STRIP_F_AGGRESSIVE)) {
             dst[o++] = c;
             size_t ni = css_try_short_hex(src, len, i + 1, dst, &o);
             if (ni != i + 1) {
@@ -497,6 +500,15 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst,
     int pending_nl = 0;    /* a collapsed run contained a newline */
     int pending_sp = 0;    /* a collapsed run contained spaces only */
 
+    /* Correct JavaScript minification requires lexical-goal state and
+     * recursive parsing of template substitutions. Conservative mode is an
+     * exact pass-through; the historical byte scanner remains available only
+     * through the explicitly lossy aggressive mode. */
+    if (!(flags & STRIP_F_AGGRESSIVE)) {
+        memmove(dst, src, len);
+        return len;
+    }
+
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
 
@@ -596,16 +608,6 @@ strip_js(const unsigned char *src, size_t len, unsigned char *dst,
                        && (sc_is_word(c) || c == '(' || c == '['))
             {
                 /* keep a single separating space between adjacent words */
-                dst[o++] = ' ';
-            } else if (!(flags & STRIP_F_AGGRESSIVE) && o > 0 && prev == c
-                       && (c == '+' || c == '-'))
-            {
-                /* AUD-02 (confirmed lossy): dropping the space between two
-                 * identical operator chars fuses distinct tokens into a
-                 * different one, e.g. `a + +b` -> `a++b` (unary plus becomes
-                 * increment) or `a - -b` -> `a--b`. Conservative mode keeps
-                 * the space for exactly this identical-char case; a general
-                 * tokenizer is out of scope here. */
                 dst[o++] = ' ';
             }
             pending_nl = 0;
@@ -858,10 +860,19 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
     for (i = 0; i < len; i++) {
         unsigned char c = src[i];
 
-        /* HTML comment <!-- ... --> (but not <!DOCTYPE> or conditional IE) */
+        /* HTML comment <!-- ... --> (but not <!DOCTYPE>). */
         if (c == '<' && i + 3 < len && src[i + 1] == '!' && src[i + 2] == '-'
             && src[i + 3] == '-')
         {
+            /* Literal whitespace before a comment belongs to the document;
+             * flush it before skipping the non-contiguous comment bytes. */
+            if (pending_space && !(flags & STRIP_F_AGGRESSIVE)) {
+                size_t k;
+                for (k = pending_start; k < i; k++) {
+                    dst[o++] = src[k];
+                }
+            }
+            pending_space = 0;
             i += 4;
             while (i + 2 < len
                    && !(src[i] == '-' && src[i + 1] == '-' && src[i + 2] == '>'))
@@ -869,19 +880,21 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
                 i++;
             }
             i += 2; /* lands on '>', loop ++ steps past */
-            pending_space = 1;
-            pending_start = i + 1; /* no literal run: force collapse */
+            if (flags & STRIP_F_AGGRESSIVE) {
+                pending_space = 1;
+                pending_start = i + 1; /* synthesize old separator behavior */
+            }
             continue;
         }
 
         if (c == '<') {
-            /* flush the buffered run if it was meaningful text before a tag.
-             * AUD-04: collapse under AGGRESSIVE (old behaviour) or when the
-             * run is comment-synthesized (no literal bytes to replay);
-             * otherwise copy it verbatim. */
-            if (pending_space && o > 0 && dst[o - 1] != '>') {
-                if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
-                    dst[o++] = ' ';
+            /* Inter-element whitespace is a DOM text node too. Preserve it
+             * verbatim by default; aggressive mode keeps the old collapse. */
+            if (pending_space) {
+                if (flags & STRIP_F_AGGRESSIVE) {
+                    if (o > 0 && dst[o - 1] != '>') {
+                        dst[o++] = ' ';
+                    }
                 } else {
                     size_t k;
                     for (k = pending_start; k < i; k++) {
@@ -891,12 +904,18 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
             }
             pending_space = 0;
 
-            /* detect raw-text elements whose bodies must survive verbatim */
+            /* Detect raw-text/RCDATA elements whose bodies must survive
+             * verbatim. Copying RCDATA bytes unchanged is conservative. */
             static const struct { const char *name; size_t len; } raw[] = {
                 { "pre",      3 },
                 { "textarea", 8 },
                 { "script",   6 },
                 { "style",    5 },
+                { "title",    5 },
+                { "iframe",   6 },
+                { "xmp",      3 },
+                { "noembed",  7 },
+                { "noframes", 8 },
             };
             size_t r;
             int matched = -1;
@@ -939,43 +958,26 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
         }
 
         if (pending_space) {
-            /* Pure inter-tag whitespace ('>' … '<') is never a text node —
-             * it renders as nothing regardless of surrounding CSS — so it is
-             * always safe to drop in full, in both modes. A run that started
-             * after a stripped comment has no literal source bytes to replay
-             * (pending_start == i means the run is comment-synthesized), so
-             * it always gets the single-space collapse rather than a verbatim
-             * copy of nothing. */
-            if (o > 0 && dst[o - 1] == '>' && c == '<') {
-                pending_space = 0;
-            } else if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
-                /* Collapse to a single space (old behaviour; also used for
-                 * the comment-synthesized case in both modes, since there is
-                 * no literal whitespace run to preserve verbatim there). */
+            if (flags & STRIP_F_AGGRESSIVE) {
                 if (o > 0) {
                     dst[o++] = ' ';
                 }
-                pending_space = 0;
             } else {
-                /*
-                 * AUD-04 (confirmed lossy): the collapse above assumes
-                 * ordinary flow layout, where runs of whitespace are
-                 * insignificant. HTML does not encode `white-space: pre`/
-                 * `pre-wrap` in the markup itself — that is a CSS property
-                 * this byte-level filter cannot see — so collapsing
-                 * text-node whitespace can silently change rendered output
-                 * for elements styled that way. Conservative mode copies the
-                 * whole buffered run verbatim instead of collapsing it.
-                 */
                 size_t k;
                 for (k = pending_start; k < i; k++) {
                     dst[o++] = src[k];
                 }
-                pending_space = 0;
             }
+            pending_space = 0;
         }
 
         dst[o++] = c;
+    }
+
+    if (pending_space && !(flags & STRIP_F_AGGRESSIVE)) {
+        for (i = pending_start; i < len; i++) {
+            dst[o++] = src[i];
+        }
     }
 
     return o;
@@ -984,10 +986,9 @@ strip_html(const unsigned char *src, size_t len, unsigned char *dst,
 /* ---- SVG --------------------------------------------------------------- */
 
 /*
- * SVG/XML minifier: strip <!-- comments -->, pass <![CDATA[...]]> verbatim,
- * collapse inter-tag whitespace. Structurally identical to strip_html but
- * without raw-text element handling (SVG has no <pre>/<script> semantics at
- * the filter layer) and with CDATA passthrough.
+ * SVG/XML minifier: strip <!-- comments --> and pass <![CDATA[...]]> verbatim.
+ * Conservative mode preserves character-data whitespace; aggressive mode
+ * collapses it. Attribute values stay quoted.
  */
 static size_t
 strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
@@ -1002,13 +1003,14 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
         unsigned char c = src[i];
 
         if (c == '<') {
-            if (pending_space && o > 0 && dst[o - 1] != '>') {
-                /* AUD-03: text-before-tag whitespace is a text node too.
-                 * Collapse under AGGRESSIVE (old behaviour) or when the run
-                 * is comment-synthesized (no literal bytes to replay);
-                 * otherwise copy the run verbatim. */
-                if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
-                    dst[o++] = ' ';
+            /* XML whitespace is character data even between elements.
+             * Preserve it by default; aggressive mode keeps the old drop or
+             * collapse behavior. */
+            if (pending_space) {
+                if (flags & STRIP_F_AGGRESSIVE) {
+                    if (o > 0 && dst[o - 1] != '>') {
+                        dst[o++] = ' ';
+                    }
                 } else {
                     size_t k;
                     for (k = pending_start; k < i; k++) {
@@ -1030,8 +1032,10 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
                     i++;
                 }
                 i += 2; /* lands on '>', loop ++ steps past */
-                pending_space = 1;
-                pending_start = i + 1; /* no literal run: force collapse */
+                if (flags & STRIP_F_AGGRESSIVE) {
+                    pending_space = 1;
+                    pending_start = i + 1; /* synthesize old separator */
+                }
                 continue;
             }
 
@@ -1073,41 +1077,26 @@ strip_svg(const unsigned char *src, size_t len, unsigned char *dst,
         }
 
         if (pending_space) {
-            /*
-             * Only pure inter-tag whitespace ('>' … '<') is always safe to
-             * drop in full — it is never a text node.
-             *
-             * AUD-03 (confirmed lossy): SVG/XML has no xml:space="preserve"
-             * awareness here, so collapsing a text-node whitespace run — even
-             * to a single space — can corrupt content the document declared
-             * significant (e.g. <text xml:space="preserve"> or embedded
-             * <style>/<script> text where run-length matters). Tracking
-             * xml:space state across nested/inherited elements is a
-             * meaningfully bigger change (attribute parse + element-stack
-             * scoping) than fits this gate. Conservative choice: when the
-             * flag is clear, copy the buffered run verbatim in a text node
-             * rather than attempt partial xml:space support that could still
-             * be wrong for inherited scope. Aggressive mode keeps the old
-             * single-space collapse. A run with no literal source bytes
-             * (comment-synthesized, pending_start == i) always collapses —
-             * there is nothing to replay. */
-            if (o > 0 && dst[o - 1] == '>' && c == '<') {
-                pending_space = 0;
-            } else if ((flags & STRIP_F_AGGRESSIVE) || pending_start == i) {
+            if (flags & STRIP_F_AGGRESSIVE) {
                 if (o > 0) {
                     dst[o++] = ' ';
                 }
-                pending_space = 0;
             } else {
                 size_t k;
                 for (k = pending_start; k < i; k++) {
                     dst[o++] = src[k];
                 }
-                pending_space = 0;
             }
+            pending_space = 0;
         }
 
         dst[o++] = c;
+    }
+
+    if (pending_space && !(flags & STRIP_F_AGGRESSIVE)) {
+        for (i = pending_start; i < len; i++) {
+            dst[o++] = src[i];
+        }
     }
 
     return o;
@@ -1134,8 +1123,8 @@ strip_minify(strip_kind_t kind, const unsigned char *src, size_t len,
         break;
     case STRIP_SVG:
     case STRIP_XML:
-        /* SVG and generic XML (RSS/Atom/sitemap) share one minifier: strip
-         * comments, pass CDATA verbatim, collapse inter-tag whitespace. */
+        /* SVG and generic XML share one minifier. Conservative mode preserves
+         * all character-data whitespace; aggressive mode collapses it. */
         n = strip_svg(src, len, dst, flags);
         break;
     case STRIP_HTML:

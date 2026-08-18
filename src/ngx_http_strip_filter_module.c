@@ -22,7 +22,7 @@
  *   strip_xml      on|off;      minify XML responses (RSS/Atom/sitemap, +xml)
  *   strip_aggressive on|off;    enable lossy transforms (default off = conservative)
  *   strip_min_size <size>;      skip bodies smaller than this (default 0)
- *   strip_max_size <size>;      skip bodies larger than this (default 10m)
+ *   strip_max_size <size>;      skip bodies larger than this (default 1m)
  *   strip_types    <mime> ...;  extra HTML-treated MIME types
  */
 
@@ -314,6 +314,22 @@ ngx_http_strip_header_filter(ngx_http_request_t *r)
         return ngx_http_next_header_filter(r);
     }
 
+    /* Conservative JavaScript is byte-identical by contract. Bypass the body
+     * filter entirely so it also keeps Content-Length/ETag and allocates no
+     * buffering context. */
+    if (kind == STRIP_JS && !slcf->aggressive) {
+        return ngx_http_next_header_filter(r);
+    }
+
+    /* A known oversized body can bypass before allocating context or taking
+     * any request-pool snapshots. Unknown-length/chunked bodies retain the
+     * incremental max_size guard in the body filter. */
+    if (r->headers_out.content_length_n > 0
+        && (uint64_t) r->headers_out.content_length_n > (uint64_t) slcf->max_size)
+    {
+        return ngx_http_next_header_filter(r);
+    }
+
     ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_strip_ctx_t));
     if (ctx == NULL) {
         return NGX_ERROR;
@@ -445,7 +461,7 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
     ngx_chain_t                *cl, *out;
     ngx_buf_t                  *b;
     ngx_http_strip_loc_conf_t  *slcf;
-    u_char                     *src, *p, *dst;
+    u_char                     *src, *p;
     size_t                      outlen, copied;
     unsigned                    flags;
 
@@ -488,22 +504,18 @@ ngx_http_strip_flush(ngx_http_request_t *r, ngx_http_strip_ctx_t *ctx)
      * uninitialized tail bytes of src into the minifier. */
     copied = (size_t) (p - src);
 
-    /* output is never larger than input */
-    dst = ngx_pnalloc(r->pool, ctx->len ? ctx->len : 1);
-    if (dst == NULL) {
-        return NGX_ERROR;
-    }
-
     flags = slcf->aggressive ? STRIP_F_AGGRESSIVE : 0;
-    outlen = strip_minify(ctx->kind, src, copied, dst, flags);
+    /* Every core path supports src == dst and never expands. Reusing the
+     * coalesced buffer avoids a third body-sized request-pool allocation. */
+    outlen = strip_minify(ctx->kind, src, copied, src, flags);
 
     b = ngx_calloc_buf(r->pool);
     if (b == NULL) {
         return NGX_ERROR;
     }
 
-    b->pos = dst;
-    b->last = dst + outlen;
+    b->pos = src;
+    b->last = src + outlen;
     b->memory = (outlen > 0) ? 1 : 0;
     /* reproduce exactly the terminal flags we observed on the input chain */
     b->last_buf = ctx->last_buf;
@@ -563,7 +575,7 @@ ngx_http_strip_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->aggressive, prev->aggressive, 0);
     ngx_conf_merge_size_value(conf->min_size, prev->min_size, 0);
     ngx_conf_merge_size_value(conf->max_size, prev->max_size,
-                              10 * 1024 * 1024);
+                              1024 * 1024);
 
     if (ngx_http_merge_types(cf, &conf->types_keys, &conf->types,
                              &prev->types_keys, &prev->types,

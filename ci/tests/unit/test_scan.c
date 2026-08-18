@@ -24,11 +24,10 @@
  *   golden file minted from the code asserts only that the code equals itself.
  *
  * HOW EACH CASE WAS PROVEN
- *   Every group below carries a CONTROL comment naming a one-line mutation of
- *   strip_core.c that makes that group fail. A test that stays green when the
- *   line it claims to cover is broken is coverage theatre. If you add a case,
- *   add its control, and check that the control reds YOUR case rather than
- *   crashing the binary somewhere else.
+ *   State-machine groups carry CONTROL comments naming one-line mutations of
+ *   strip_core.c that make the relevant cases fail. These controls document
+ *   how the expectations were challenged; CI gates the exact outputs,
+ *   negative controls, sanitizer runs, and fuzz replay.
  *
  * INVARIANT CHECKED ON EVERY CASE
  *   strip_minify() must never write more bytes than it read; the caller sizes
@@ -136,6 +135,33 @@ ok_invariant(strip_kind_t kind, const char *in, size_t in_len, const char *name)
     tap(n <= in_len, name);
 }
 
+static void
+ok_invariant_flags(strip_kind_t kind, unsigned flags, const char *in,
+                   size_t in_len, const char *name)
+{
+    unsigned char out[8192];
+    size_t n = strip_minify(kind, (const unsigned char *) in, in_len, out, flags);
+
+    if (n > in_len) {
+        printf("#   OUTPUT LONGER THAN INPUT: %zu > %zu\n", n, in_len);
+    }
+    tap(n <= in_len, name);
+}
+
+static void
+is_min_in_place(strip_kind_t kind, unsigned flags, const char *in,
+                const char *want, const char *name)
+{
+    unsigned char buf[8192];
+    size_t in_len = strlen(in);
+    size_t want_len = strlen(want);
+    size_t n;
+
+    memcpy(buf, in, in_len);
+    n = strip_minify(kind, buf, in_len, buf, flags);
+    tap(n == want_len && memcmp(buf, want, n) == 0, name);
+}
+
 
 /* ---- CSS: url() token ---------------------------------------------------
  *
@@ -215,41 +241,45 @@ test_css_url(void)
 static void
 test_css_hex(void)
 {
+    is_min(STRIP_CSS, "#aabbcc { color: red }", "#aabbcc{color:red}",
+           "css: conservative mode does not rewrite an ID selector");
+
     /* CSS Color 3 § 4.2.1: #rgb is expanded by doubling each digit, so #aabbcc
      * and #abc are the same colour and the shortening is lossless. */
-    is_min(STRIP_CSS, "a{color:#aabbcc}", "a{color:#abc}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabbcc}", "a{color:#abc}",
            "css: #aabbcc shortened to #abc");
 
     /* Doubling is case-insensitive; the short form is emitted lowercase. */
-    is_min(STRIP_CSS, "a{color:#AABBCC}", "a{color:#abc}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#AABBCC}", "a{color:#abc}",
            "css: #AABBCC shortened and lowercased");
-    is_min(STRIP_CSS, "a{color:#aAbBcC}", "a{color:#abc}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aAbBcC}", "a{color:#abc}",
            "css: mixed-case pairs still equal");
 
     /* Any unequal pair makes the colour unrepresentable in 3 digits. */
-    is_min(STRIP_CSS, "a{color:#123456}", "a{color:#123456}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#123456}", "a{color:#123456}",
            "css: unequal pairs not shortened");
-    is_min(STRIP_CSS, "a{color:#aabbcd}", "a{color:#aabbcd}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabbcd}", "a{color:#aabbcd}",
            "css: last pair unequal not shortened");
 
     /* 8-digit #rrggbbaa is a different token; treating its first 6 digits as a
      * colour would silently drop the alpha channel. The trailing hex digit is
      * what must stop the transform. */
-    is_min(STRIP_CSS, "a{color:#aabbccdd}", "a{color:#aabbccdd}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabbccdd}", "a{color:#aabbccdd}",
            "css: 8-digit hex left alone");
 
     /* Fewer than 6 digits available. */
-    is_min(STRIP_CSS, "a{color:#aabb}", "a{color:#aabb}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabb}", "a{color:#aabb}",
            "css: 4-digit hex left alone");
-    is_min(STRIP_CSS, "a{color:#aab}", "a{color:#aab}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aab}", "a{color:#aab}",
            "css: 3-digit hex already short");
 
     /* A non-hex byte inside the six disqualifies it. */
-    is_min(STRIP_CSS, "a{color:#aabbgg}", "a{color:#aabbgg}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabbgg}", "a{color:#aabbgg}",
            "css: non-hex digit not shortened");
 
     /* Truncated at end of input. */
-    ok_invariant(STRIP_CSS, "a{color:#aab", 12,
+    ok_invariant_flags(STRIP_CSS, STRIP_F_AGGRESSIVE,
+                 "a{color:#aab", 12,
                  "css: truncated hex stays in bounds");
 
     /* All six digits present but nothing follows them at all — the "end of
@@ -264,7 +294,7 @@ test_css_hex(void)
      * digit), and "css: hex shortened when input ends exactly at 6 digits"
      * reds — output stays the full `#aabbcc` (15 bytes) instead of the
      * shortened `#abc` (12 bytes). */
-    is_min(STRIP_CSS, "a{color:#aabbcc", "a{color:#abc",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE, "a{color:#aabbcc", "a{color:#abc",
            "css: hex shortened when input ends exactly at 6 digits");
 
     /* css_try_short_hex() early-return reject paths, exercised directly
@@ -276,7 +306,8 @@ test_css_hex(void)
      * `#12345g` is then read as 6 "hex" digits (g treated as hex), the pair
      * check on garbage bytes may spuriously pass, and this case can shorten
      * or corrupt a token that is not a valid hex color at all. */
-    is_min(STRIP_CSS, "a{color:#12345g}", "a{color:#12345g}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE,
+           "a{color:#12345g}", "a{color:#12345g}",
            "css: hex with a non-hex digit in the run is untouched");
 
     /* CONTROL for the pair-mismatch guard: in css_try_short_hex()
@@ -284,7 +315,8 @@ test_css_hex(void)
      * `#123456` would then shorten to a wrong 3-digit color, `#135` — not the
      * same color as `#123456` at all, since doubling only round-trips equal
      * pairs. */
-    is_min(STRIP_CSS, "a{color:#123456}", "a{color:#123456}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE,
+           "a{color:#123456}", "a{color:#123456}",
            "css: hex pairs that don't match are not shortened (distinct color)");
 
     /* CONTROL for the 7th-hex-digit guard: in css_try_short_hex()
@@ -297,7 +329,8 @@ test_css_hex(void)
      * actually distinguishes "guard fired" from "pairs just didn't match":
      * with the guard, this 7-digit run must stay untouched; without it, the
      * matching first 6 digits would shorten to `#abc` + trailing `d`. */
-    is_min(STRIP_CSS, "a{color:#aabbccd}", "a{color:#aabbccd}",
+    is_min_flags(STRIP_CSS, STRIP_F_AGGRESSIVE,
+           "a{color:#aabbccd}", "a{color:#aabbccd}",
            "css: matching-pair hex followed by a 7th hex digit is not shortened");
 }
 
@@ -468,37 +501,37 @@ test_js_regex(void)
     /* ECMA-262 § 12.10: after `return`, `/` starts a RegularExpressionLiteral.
      * Its body is literal text — collapsing whitespace inside changes the
      * pattern. */
-    is_min(STRIP_JS, "return /a  b/;", "return /a  b/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /a  b/;", "return /a  b/;",
            "js: regex after return is a literal");
-    is_min(STRIP_JS, "typeof /a  b/;", "typeof /a  b/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "typeof /a  b/;", "typeof /a  b/;",
            "js: regex after typeof is a literal");
-    is_min(STRIP_JS, "case /a  b/:", "case /a  b/:",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "case /a  b/:", "case /a  b/:",
            "js: regex after case is a literal");
 
     /* After an identifier or a value, `/` is the division operator and the
      * operands are ordinary tokens. */
-    is_min(STRIP_JS, "var x = a  /  b;", "var x=a/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = a  /  b;", "var x=a/b;",
            "js: slash after identifier is division");
-    is_min(STRIP_JS, "var x = 1  /  2;", "var x=1/2;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = 1  /  2;", "var x=1/2;",
            "js: slash after number is division");
-    is_min(STRIP_JS, "var x = (a)  /  b;", "var x=(a)/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = (a)  /  b;", "var x=(a)/b;",
            "js: slash after ')' is division");
-    is_min(STRIP_JS, "var x = a[0]  /  b;", "var x=a[0]/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = a[0]  /  b;", "var x=a[0]/b;",
            "js: slash after ']' is division");
 
     /* A member-access name that merely spells a keyword is a property, so the
      * slash after `foo.return` is still division. */
-    is_min(STRIP_JS, "var x = foo.in  /  b;", "var x=foo.in/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = foo.in  /  b;", "var x=foo.in/b;",
            "js: keyword as property name is not a regex position");
 
     /* A regex may contain an escaped slash and a character class containing an
      * unescaped slash; neither ends the literal. */
-    is_min(STRIP_JS, "return /a\\/b  c/;", "return /a\\/b  c/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /a\\/b  c/;", "return /a\\/b  c/;",
            "js: escaped slash does not end the regex");
-    is_min(STRIP_JS, "return /[/  ]x/;", "return /[/  ]x/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /[/  ]x/;", "return /[/  ]x/;",
            "js: slash inside a character class does not end the regex");
 
-    ok_invariant(STRIP_JS, "return /unterminated", 20,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /unterminated", 20,
                  "js: unterminated regex stays in bounds");
 
     /* js_regex_allowed(): `.` before a trailing identifier means the
@@ -512,7 +545,7 @@ test_js_regex(void)
      * `foo.return / 2` would then hit the keyword table for `return` and be
      * read as a regex position, corrupting the surrounding whitespace
      * handling around the division operator. */
-    is_min(STRIP_JS, "foo.return  /  2;", "foo.return/2;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "foo.return  /  2;", "foo.return/2;",
            "js: '.' before a keyword-spelled property name is still division");
 }
 
@@ -530,22 +563,22 @@ test_js_newlines(void)
 {
     /* ECMA-262 § 12.9.1: a LineTerminator between two tokens can trigger
      * Automatic Semicolon Insertion. Dropping it changes the parse. */
-    is_min(STRIP_JS, "a = 1\nb = 2\n", "a=1\nb=2\n",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a = 1\nb = 2\n", "a=1\nb=2\n",
            "js: newline kept where ASI needs it");
-    is_min(STRIP_JS, "return\nx", "return\nx",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return\nx", "return\nx",
            "js: newline after return kept (ASI makes this return undefined)");
-    is_min(STRIP_JS, "a\n(b)", "a\n(b)",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a\n(b)", "a\n(b)",
            "js: newline before '(' kept");
 
     /* Between tokens that cannot start or end a statement, the newline is pure
      * formatting. */
-    is_min(STRIP_JS, "var x = {\n  a: 1\n};", "var x={a:1};",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = {\n  a: 1\n};", "var x={a:1};",
            "js: newline inside an object literal dropped");
-    is_min(STRIP_JS, "f(\n  1,\n  2\n);", "f(1,2);",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "f(\n  1,\n  2\n);", "f(1,2);",
            "js: newline inside an argument list dropped");
 
     /* Whitespace between two words is a token separator and must not vanish. */
-    is_min(STRIP_JS, "var    x;", "var x;", "js: run between words collapses to one space");
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var    x;", "var x;", "js: run between words collapses to one space");
 }
 
 
@@ -560,53 +593,53 @@ test_js_newlines(void)
 static void
 test_js_literals(void)
 {
-    is_min(STRIP_JS, "var s = \"a  b\";", "var s=\"a  b\";",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = \"a  b\";", "var s=\"a  b\";",
            "js: string content verbatim");
-    is_min(STRIP_JS, "var s = 'a  b';", "var s='a  b';",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = 'a  b';", "var s='a  b';",
            "js: single-quoted string content verbatim");
-    is_min(STRIP_JS, "var s = \"a\\\"  b\";", "var s=\"a\\\"  b\";",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = \"a\\\"  b\";", "var s=\"a\\\"  b\";",
            "js: escaped quote inside string");
 
     /* Template literals preserve everything, including newlines, and their
      * substitutions are part of the literal token. */
-    is_min(STRIP_JS, "var s = `a  b`;", "var s=`a  b`;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = `a  b`;", "var s=`a  b`;",
            "js: template literal content verbatim");
-    is_min(STRIP_JS, "var s = `a\n  b`;", "var s=`a\n  b`;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = `a\n  b`;", "var s=`a\n  b`;",
            "js: newline inside a template literal kept");
-    is_min(STRIP_JS, "var s = `a${ x }b`;", "var s=`a${ x }b`;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = `a${ x }b`;", "var s=`a${ x }b`;",
            "js: template substitution kept verbatim");
 
     /* Comments are not part of the program. After an explicit `;` the
      * statement is already terminated, so ASI has nothing to do and the
      * newline the comment ended on is pure formatting. */
-    is_min(STRIP_JS, "var x = 1; // trailing\nvar y = 2;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = 1; // trailing\nvar y = 2;",
            "var x=1;var y=2;", "js: line comment removed after ';'");
 
     /* Without the `;` the newline is load-bearing and must survive the
      * comment's removal, or the two statements weld into one. */
-    is_min(STRIP_JS, "var x = 1 // trailing\nvar y = 2",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = 1 // trailing\nvar y = 2",
            "var x=1\nvar y=2", "js: line comment removed, ASI newline survives");
-    is_min(STRIP_JS, "var x = /* c */ 1;", "var x=1;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = /* c */ 1;", "var x=1;",
            "js: block comment removed");
 
     /* ...but a comment-looking sequence inside a string is content. */
-    is_min(STRIP_JS, "var s = \"// not a comment\";",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = \"// not a comment\";",
            "var s=\"// not a comment\";", "js: comment marker inside string");
 
     /* A block comment SPANNING a newline carries that newline's ASI weight:
      * removing the comment must not also remove the statement boundary it
      * contained, or the two assignments weld into one statement. */
-    is_min(STRIP_JS, "a = 1 /* c\n   c */ b = 2", "a=1\nb=2",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a = 1 /* c\n   c */ b = 2", "a=1\nb=2",
            "js: multi-line block comment leaves an ASI newline");
-    is_min(STRIP_JS, "a = 1 /* c */ b = 2", "a=1 b=2",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a = 1 /* c */ b = 2", "a=1 b=2",
            "js: single-line block comment leaves a plain separator");
 
     /* A run in front of a literal gets the same ASI treatment as one in front
      * of an ordinary token: `return\n"x"` must not become `return "x"`, which
      * ASI turns into `return undefined`. */
-    is_min(STRIP_JS, "return\n\"x\"", "return\n\"x\"",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return\n\"x\"", "return\n\"x\"",
            "js: newline before a string literal kept for ASI");
-    is_min(STRIP_JS, "return\n`x`", "return\n`x`",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return\n`x`", "return\n`x`",
            "js: newline before a template literal kept for ASI");
 
     /* ECMA-262 § 12.8: a RegularExpressionLiteral may not contain a
@@ -615,22 +648,22 @@ test_js_literals(void)
      * observable difference is that code AFTER the bad line still gets
      * minified; asserting only "did not overflow" cannot see this, because
      * swallowing the remainder is perfectly in-bounds. */
-    is_min(STRIP_JS, "return /ab\nvar   x = 1;", "return /ab\nvar x=1;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /ab\nvar   x = 1;", "return /ab\nvar x=1;",
            "js: newline ends an unterminated regex, rest still minified");
 
     /* A leading `/` with no preceding token at all is a regex position. */
-    is_min(STRIP_JS, "/a  b/.test(x)", "/a  b/.test(x)",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "/a  b/.test(x)", "/a  b/.test(x)",
            "js: regex at the very start of input");
-    is_min(STRIP_JS, "   /a  b/.test(x)", "/a  b/.test(x)",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "   /a  b/.test(x)", "/a  b/.test(x)",
            "js: regex after leading whitespace only");
 
     /* After a string or template literal, `/` is division. */
-    is_min(STRIP_JS, "var x = \"a\"  /  b;", "var x=\"a\"/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = \"a\"  /  b;", "var x=\"a\"/b;",
            "js: slash after a string literal is division");
-    is_min(STRIP_JS, "var x = `a`  /  b;", "var x=`a`/b;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = `a`  /  b;", "var x=`a`/b;",
            "js: slash after a template literal is division");
     /* After an operator it is a regex again. */
-    is_min(STRIP_JS, "var x = 1 + /a  b/;", "var x=1+/a  b/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = 1 + /a  b/;", "var x=1+/a  b/;",
            "js: slash after an operator is a regex");
 
     /* js_flush_pending(): the very first byte of input starting a string
@@ -646,7 +679,7 @@ test_js_literals(void)
      * either way), so the case is a bounds/crash oracle, not an output oracle
      * — verified separately as an invariant check below the exact-match one,
      * matching the file's own boundary-check convention. */
-    is_min(STRIP_JS, "\"x\"", "\"x\"",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "\"x\"", "\"x\"",
            "js: string as the very first byte of input");
 
     /* A standalone multi-line JS block comment with no surrounding statements
@@ -663,7 +696,7 @@ test_js_literals(void)
      * case; the ASI-preserving *output* oracle for this branch is the
      * existing "js: multi-line block comment leaves an ASI newline" case
      * above, which has trailing content to observe the flush against. */
-    ok_invariant(STRIP_JS, "/* line1\n line2 */", 19,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "/* line1\n line2 */", 19,
                  "js: standalone multi-line block comment stays in bounds");
 
     /* strip_js() regex scanning: a character class inside the regex body may
@@ -678,7 +711,7 @@ test_js_literals(void)
      * unescaped `/`), leaving `b]/` as trailing, differently-minified code —
      * observable because the trailing `]/ ` no longer round-trips through the
      * regex path verbatim. */
-    is_min(STRIP_JS, "return /[a/b]/;", "return /[a/b]/;",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /[a/b]/;", "return /[a/b]/;",
            "js: unescaped slash inside a regex character class does not end it");
 
     /* An unterminated regex that runs into a newline must bail back to
@@ -689,15 +722,32 @@ test_js_literals(void)
      * where the newline is the LAST byte-run before EOF, with nothing after
      * it, so the loop's newline-break arm is reached without relying on any
      * later token to observe a side effect. */
-    ok_invariant(STRIP_JS, "return /unterminated\n", 22,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "return /unterminated\n", 22,
                  "js: unterminated regex bails at newline with nothing after it");
 
-    ok_invariant(STRIP_JS, "var s = \"unterminated", 21,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = \"unterminated", 21,
                  "js: unterminated string stays in bounds");
-    ok_invariant(STRIP_JS, "var s = `unterminated", 21,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var s = `unterminated", 21,
                  "js: unterminated template stays in bounds");
-    ok_invariant(STRIP_JS, "var x = /* unterminated", 23,
+    ok_invariant_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = /* unterminated", 23,
                  "js: unterminated block comment stays in bounds");
+}
+
+static void
+test_js_conservative(void)
+{
+    /* A byte scanner cannot determine JavaScript lexical goals for every
+     * valid program. Conservative mode must therefore be byte-identical. */
+    is_min(STRIP_JS, "if (true) /a  b/.test(x);",
+           "if (true) /a  b/.test(x);",
+           "js: control-head regex survives conservative mode");
+    is_min(STRIP_JS, "1 .toString();", "1 .toString();",
+           "js: numeric property-access separator survives conservative mode");
+    is_min(STRIP_JS, "let \\u0061 = 1;", "let \\u0061 = 1;",
+           "js: escaped identifier survives conservative mode");
+    is_min(STRIP_JS, "const x = `a${`b  c`}`;",
+           "const x = `a${`b  c`}`;",
+           "js: nested template survives conservative mode");
 }
 
 
@@ -816,8 +866,14 @@ test_html_attrs(void)
 static void
 test_html_structure(void)
 {
-    is_min(STRIP_HTML, "<p>a</p>\n\n<p>b</p>", "<p>a</p><p>b</p>",
-           "html: inter-tag whitespace removed");
+    is_min(STRIP_HTML, "<p>a</p>\n\n<p>b</p>", "<p>a</p>\n\n<p>b</p>",
+           "html: conservative mode preserves inter-element text");
+    is_min_flags(STRIP_HTML, STRIP_F_AGGRESSIVE,
+                 "<p>a</p>\n\n<p>b</p>", "<p>a</p><p>b</p>",
+                 "html: aggressive mode removes inter-element whitespace");
+    is_min(STRIP_HTML, "<span>a</span> <span>b</span>",
+           "<span>a</span> <span>b</span>",
+           "html: inline element separator survives conservative mode");
 
     /* AUD-04 (gate PR): collapsing text-node whitespace assumes ordinary
      * flow layout; HTML markup carries no `white-space: pre`/`pre-wrap` CSS
@@ -831,12 +887,32 @@ test_html_structure(void)
                  "html: AUD-04 text whitespace collapsed under AGGRESSIVE");
 
     is_min(STRIP_HTML, "<!-- c --><p>a</p>", "<p>a</p>", "html: comment removed");
+    is_min(STRIP_HTML, "<p>a<!-- c -->b</p>", "<p>ab</p>",
+           "html: comment removal does not synthesize character data");
+    is_min(STRIP_HTML, "<p>a  <!-- c -->b</p>", "<p>a  b</p>",
+           "html: literal whitespace before a comment survives");
+    is_min_flags(STRIP_HTML, STRIP_F_AGGRESSIVE,
+                 "<p>a<!-- c -->b</p>", "<p>a b</p>",
+                 "html: aggressive comment removal keeps old separator");
+    is_min(STRIP_HTML, "<p>x</p>  ", "<p>x</p>  ",
+           "html: trailing character-data whitespace survives");
 
     /* Bodies that are whitespace-significant survive verbatim. */
     is_min(STRIP_HTML, "<pre>a   b\nc</pre>", "<pre>a   b\nc</pre>",
            "html: <pre> body verbatim");
     is_min(STRIP_HTML, "<textarea>a   b</textarea>", "<textarea>a   b</textarea>",
            "html: <textarea> body verbatim");
+    is_min(STRIP_HTML, "<title>a <b> c</title>", "<title>a <b> c</title>",
+           "html: title RCDATA body survives verbatim");
+    is_min(STRIP_HTML, "<iframe>a <b> c</iframe>",
+           "<iframe>a <b> c</iframe>", "html: iframe raw body survives verbatim");
+    is_min(STRIP_HTML, "<xmp>a <b> c</xmp>", "<xmp>a <b> c</xmp>",
+           "html: xmp raw body survives verbatim");
+    is_min(STRIP_HTML, "<noembed>a <b> c</noembed>",
+           "<noembed>a <b> c</noembed>", "html: noembed raw body survives verbatim");
+    is_min(STRIP_HTML, "<noframes>a <b> c</noframes>",
+           "<noframes>a <b> c</noframes>",
+           "html: noframes raw body survives verbatim");
 
     /* A <script>/<style> body is JS/CSS, not markup: whatever the core does to
      * it, an HTML comment marker inside must not be treated as markup. */
@@ -859,10 +935,10 @@ test_html_structure(void)
      * or a slash inside it, not only as an exact `</script>`. Missing that
      * would leave the rest of the document inside the raw body. */
     is_min(STRIP_HTML, "<script>var a=1;</script >\n<p>x</p>",
-           "<script>var a=1;</script ><p>x</p>",
+           "<script>var a=1;</script >\n<p>x</p>",
            "html: raw-text close tag with trailing space recognised");
     is_min(STRIP_HTML, "<style>a{}</style/>\n<p>x</p>",
-           "<style>a{}</style/><p>x</p>",
+           "<style>a{}</style/>\n<p>x</p>",
            "html: raw-text close tag with a slash recognised");
     /* ...but a longer name that merely starts with it is not the close tag. */
     is_min(STRIP_HTML, "<script>var a=1;</scriptx></script>",
@@ -911,7 +987,12 @@ test_svg_xml(void)
            "svg: self-closing attribute stays quoted");
 
     is_min(STRIP_SVG, "<svg>\n  <circle r=\"1\"/>\n</svg>",
-           "<svg><circle r=\"1\"/></svg>", "svg: inter-tag whitespace removed");
+           "<svg>\n  <circle r=\"1\"/>\n</svg>",
+           "svg: conservative mode preserves inter-element character data");
+    is_min_flags(STRIP_SVG, STRIP_F_AGGRESSIVE,
+                 "<svg>\n  <circle r=\"1\"/>\n</svg>",
+                 "<svg><circle r=\"1\"/></svg>",
+                 "svg: aggressive mode removes inter-element whitespace");
 
     /* XML 1.0 § 2.7: CDATA content is literal. */
     is_min(STRIP_XML, "<a><![CDATA[  x  ]]></a>", "<a><![CDATA[  x  ]]></a>",
@@ -919,6 +1000,13 @@ test_svg_xml(void)
 
     is_min(STRIP_XML, "<a><!-- c --><b/></a>", "<a><b/></a>",
            "xml: comment removed");
+    is_min(STRIP_XML, "<a>x<!-- c -->y</a>", "<a>xy</a>",
+           "xml: comment removal does not synthesize character data");
+    is_min_flags(STRIP_XML, STRIP_F_AGGRESSIVE,
+                 "<a>x<!-- c -->y</a>", "<a>x y</a>",
+                 "xml: aggressive comment removal keeps old separator");
+    is_min(STRIP_XML, "<a>x</a>  ", "<a>x</a>  ",
+           "xml: trailing character data survives");
 
     /* XML text nodes are whitespace-sensitive, so only the '>' … '<' run is
      * safe to drop. Under AGGRESSIVE a run adjacent to text still collapses
@@ -987,6 +1075,24 @@ test_dispatch(void)
     is_min(STRIP_CSS, "a{b : c}", "a{b:c}", "dispatch: CSS kind selected");
 }
 
+static void
+test_in_place(void)
+{
+    is_min_in_place(STRIP_HTML, 0, "<p id=\"x\">a</p> <b>b</b>",
+                    "<p id=x>a</p> <b>b</b>", "in-place: HTML");
+    is_min_in_place(STRIP_CSS, STRIP_F_AGGRESSIVE,
+                    "a { color: #aabbcc; }", "a{color:#abc}",
+                    "in-place: CSS aggressive");
+    is_min_in_place(STRIP_JS, STRIP_F_AGGRESSIVE, "var x = 1;", "var x=1;",
+                    "in-place: JavaScript aggressive");
+    is_min_in_place(STRIP_JSON, 0, "{ \"a\" : 1 }", "{\"a\":1}",
+                    "in-place: JSON");
+    is_min_in_place(STRIP_SVG, 0, "<svg>x<!--c-->y</svg>", "<svg>xy</svg>",
+                    "in-place: SVG");
+    is_min_in_place(STRIP_XML, 0, "<a>x<!--c-->y</a>", "<a>xy</a>",
+                    "in-place: XML");
+}
+
 
 /* ---- boundary cases for comprehensive coverage ----------------------- */
 
@@ -1014,9 +1120,9 @@ test_boundary_cases(void)
            "html: multiple unquoted attributes");
 
     /* JS: edge cases with operators adjacent to text */
-    is_min(STRIP_JS, "a+++b", "a+++b",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a+++b", "a+++b",
            "js: plus-plus (increment) followed by operand");
-    is_min(STRIP_JS, "a-- >b", "a-->b",
+    is_min_flags(STRIP_JS, STRIP_F_AGGRESSIVE, "a-- >b", "a-->b",
            "js: decrement followed by > forms HTML comment opener");
 
     /* CSS: minimum non-zero lengths */
@@ -1026,8 +1132,8 @@ test_boundary_cases(void)
     /* HTML: empty vs whitespace in text nodes */
     is_min(STRIP_HTML, "<p></p>", "<p></p>",
            "html: empty paragraph");
-    is_min(STRIP_HTML, "<p> </p>", "<p></p>",
-           "html: paragraph with whitespace-only text node collapsed");
+    is_min(STRIP_HTML, "<p> </p>", "<p> </p>",
+           "html: whitespace-only text node survives conservative mode");
 
     /* JSON: numbers at boundaries */
     is_min(STRIP_JSON, "{\"a\":0}", "{\"a\":0}",
@@ -1044,21 +1150,11 @@ test_boundary_cases(void)
 }
 
 
-/* ---- flags gate: conservative vs aggressive now DIFFER -------------------
+/* ---- flags gate: conservative vs aggressive differ -----------------------
  *
- * strip_minify() grew a `flags` parameter (STRIP_F_AGGRESSIVE) in the plumbing
- * PR; THIS PR is the one that gates the four confirmed-lossy transforms behind
- * it (AUD-01 CSS zero-unit, AUD-02 JS identical-operator fusion, AUD-03 SVG/XML
- * text-node whitespace, AUD-04 HTML text-node whitespace). The identity
- * assertion the plumbing PR seeded was the deliberate canary for this change:
- * it must now read FALSE for every kind whose representative input actually
- * exercises a gated transform, and stays TRUE only where it doesn't (SVG's
- * sample here is pure inter-tag whitespace, which was never gated; JSON has no
- * aggressive path at all).
- *
- * CONTROL: gate any of the four transforms on `1` instead of
- * `flags & STRIP_F_AGGRESSIVE` (i.e. always run it) and its "differs" case
- * below reds — output goes back to being identical for flags=0 and AGGRESSIVE.
+ * Every representative below must diverge across modes. Changing its guarded
+ * branch to run unconditionally makes the corresponding assertion red. JSON
+ * has no aggressive path and remains the negative control.
  */
 
 static void
@@ -1133,13 +1229,10 @@ test_flags_gate_behaviour(void)
     is_flags_differ(STRIP_XML, "<a>x   <b/></a>",
                     "flags: XML output DIFFERS for flags=0 vs AGGRESSIVE (AUD-03)");
 
-    /* Inputs that do NOT touch any gated transform still produce identical
-     * output — the gate must not leak into unrelated code paths. SVG's
-     * sample here is pure inter-tag whitespace ('>' … '<'), which was never
-     * gated (only text-node whitespace is). JSON has no aggressive path at
-     * all; flags is simply ignored there. */
-    is_flags_identical(STRIP_SVG, "<svg>  <rect/>   </svg>",
-                       "flags: SVG inter-tag whitespace identical for flags=0 vs AGGRESSIVE");
+    /* Inter-element XML/SVG character data is gated too. */
+    is_flags_differ(STRIP_SVG, "<svg>  <rect/>   </svg>",
+                    "flags: SVG inter-tag whitespace differs by mode");
+    /* JSON has no aggressive path; flags is ignored there. */
     is_flags_identical(STRIP_JSON, "{\"a\": 1}",
                        "flags: JSON output identical for flags=0 vs AGGRESSIVE");
     is_flags_identical(STRIP_CSS, "a{color:red;background:blue}",
@@ -1157,12 +1250,14 @@ main(void)
     test_js_regex();
     test_js_newlines();
     test_js_literals();
+    test_js_conservative();
     test_json();
     test_html_attrs();
     test_html_structure();
     test_svg_xml();
     test_boundary_cases();
     test_dispatch();
+    test_in_place();
     test_flags_gate_behaviour();
 
     printf("1..%d\n", plan_n);

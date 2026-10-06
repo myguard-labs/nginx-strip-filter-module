@@ -85,6 +85,12 @@ else
 fi
 if ! git diff --quiet -- .github/ 2>/dev/null; then
     CHANGED=1
+    # Rewritten workflows carry a `# sync-sha:` content stamp, and the PR
+    # lane's Validation job fails on a stale one (sync-stamp.sh --check).
+    # Re-stamp here so the bump PR is mergeable as opened.
+    if [ "$DRY_RUN" = 0 ]; then
+        bash ci/tools/sync-stamp.sh
+    fi
 fi
 
 echo "CHANGED=$CHANGED"

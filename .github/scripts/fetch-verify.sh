@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sync-sha: ccf5050af7c7811563f1331689df8569dc1f57d36242ba2983a1069c0099785a
+# sync-sha: 49a3b12bdfac7752db3ccbc7c7bd74668ecf4e19035f7730eb52f473c4919e99
 # fetch-verify.sh URL EXPECTED_SHA256 OUTFILE
 #
 # Download URL to OUTFILE and verify its sha256 against EXPECTED_SHA256.
@@ -28,8 +28,9 @@ fi
 # "$got  $out" line, which compute-versions.sh reads as the digest.
 echo "downloading: $url" >&2
 # -f: fail on HTTP errors; -S: show errors; -L: follow redirects; retries.
+# --retry-all-errors: plain --retry skips TLS/connection resets (curl 35/56).
 # --connect-timeout/--max-time: a stalled upstream must not hold a runner open.
-curl -fSL --retry 3 --retry-delay 2 \
+curl -fSL --retry 3 --retry-delay 2 --retry-all-errors \
   --connect-timeout 30 --max-time 300 -o "$out" "$url"
 
 got="$(sha_of "$out")"

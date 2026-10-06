@@ -1,4 +1,4 @@
-# sync-sha: 6bfb4745d2c0c2cbe25ce452c255ff2e7d65416c394243f53d153019eaac916e
+# sync-sha: fa186a076c421e7c013228bbeb5b81cc265c2813e8f1551401d97491288826b2
 name: CI
 
 # Single entry point for the PR suite.
@@ -79,6 +79,7 @@ jobs:
   changes:
     name: Lane map sanity
     runs-on: ["self-hosted", "builder02", "lxc"]
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:

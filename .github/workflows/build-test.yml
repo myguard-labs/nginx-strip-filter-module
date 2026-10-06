@@ -1,4 +1,4 @@
-# sync-sha: ccc242199ccaf3ed0fb8d6378c0e1259149af8a0758b058a434e6e25ea829d5d
+# sync-sha: 3e5779a3e7e7bef60bc7d11a4b22c8414f8a1f9b387124b1b20dcb557c3e92e6
 name: Build and Test
 
 env:
@@ -37,12 +37,16 @@ jobs:
       - name: Validate scripts and source
         run: |
           bash -n ci/tools/ci-build.sh .github/scripts/compute-versions.sh \
+            .github/scripts/fetch-verify.sh \
             ci/tools/bump-actions.sh ci/tools/bump-versions.sh \
-            ci/tests/tools/test-bump-actions.sh
+            ci/tests/tools/test-*.sh
           shellcheck ci/tools/ci-build.sh ci/tools/sync-stamp.sh \
-            .github/scripts/compute-versions.sh ci/tools/bump-actions.sh \
-            ci/tools/bump-versions.sh ci/tests/tools/test-bump-actions.sh
+            .github/scripts/compute-versions.sh .github/scripts/fetch-verify.sh \
+            ci/tools/bump-actions.sh ci/tools/bump-versions.sh \
+            ci/tests/tools/test-*.sh
           bash ci/tests/tools/test-bump-actions.sh
+          bash ci/tests/tools/test-bump-versions-stamp.sh
+          bash ci/tests/tools/test-ci-build-fetch.sh
           # Each stamped .github/ file carries a `# sync-sha:` of its own
           # content, so a `--list` diff against nginx-skeleton-module names
           # exactly which copies have drifted. The stamps are only worth

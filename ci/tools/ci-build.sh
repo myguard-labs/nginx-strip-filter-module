@@ -47,38 +47,57 @@ case "$FLAVOR" in
 esac
 
 mkdir -p "$ROOT"
-# .github/versions.env is the single source of truth for the nginx tarball's
-# sha256. Only nginx carries a pin there today (this repo builds one flavor,
-# one version -- see the versions.env header); an angie build, or a nginx
-# VERSION that simply isn't the pinned one (a deliberate one-off/local build),
-# falls back to an unverified download exactly as before.
+# .github/versions.env is the single source of truth for tarball sha256s.
+# Every version it pins for this flavor is verified: nginx NGINX_VERSION,
+# NGINX_MAINLINE and NGINX_STABLE (ci-deep builds the latter two), and Angie
+# ANGIE_VERSION. Only a VERSION that versions.env does not pin at all (a
+# deliberate one-off/local build) falls back to an unverified download.
 #
 # The one case that must NOT fall back quietly: a caller running under a
-# workflow (NGINX_VERSION env set) whose VERSION matches that env, but the
-# env itself has drifted from versions.env's pinned version -- e.g. a
+# workflow (NGINX_VERSION / ANGIE_VERSION env set) whose VERSION matches that
+# env, but the env itself has drifted from versions.env's pin -- e.g. a
 # workflow still hardcoding an older "1.31.1" after versions.env was bumped
 # to "1.31.3". Silently treating that as "not the pinned version, skip the
 # check" would turn a bump into a permanent unverified build for every
 # workflow that forgot to move its own copy. Fail loud instead: the pin
 # exists so a version move never ships unverified.
+VERSIONS_FILE="$MODULE_DIR/.github/versions.env"
+pin() { grep -m1 "^$1=" "$VERSIONS_FILE" | cut -d= -f2- || true; }
+case "$FLAVOR" in
+    nginx)
+        PRIMARY_KEY="NGINX_VERSION"
+        PIN_KEYS="NGINX_VERSION:NGINX_VERSION_SHA256 NGINX_MAINLINE:NGINX_MAINLINE_SHA256 NGINX_STABLE:NGINX_STABLE_SHA256"
+        ;;
+    angie)
+        PRIMARY_KEY="ANGIE_VERSION"
+        PIN_KEYS="ANGIE_VERSION:ANGIE_SHA256"
+        ;;
+esac
 SHA256="-"
-if [ "$FLAVOR" = "nginx" ] && [ -f "$MODULE_DIR/.github/versions.env" ]; then
-    pinned_version="$(grep -m1 '^NGINX_VERSION=' "$MODULE_DIR/.github/versions.env" | cut -d= -f2-)"
-    pinned_sha="$(grep -m1 '^NGINX_VERSION_SHA256=' "$MODULE_DIR/.github/versions.env" | cut -d= -f2-)"
-    if [ "$VERSION" = "$pinned_version" ]; then
-        SHA256="$pinned_sha"
-    elif [ -n "${NGINX_VERSION:-}" ] && [ "$VERSION" = "$NGINX_VERSION" ]; then
-        echo "::error::caller's NGINX_VERSION ($NGINX_VERSION) does not match .github/versions.env's pin ($pinned_version) -- refusing to build nginx unverified. Update the caller's NGINX_VERSION to match versions.env." >&2
+if [ -f "$VERSIONS_FILE" ]; then
+    for pair in $PIN_KEYS; do
+        if [ "$VERSION" = "$(pin "${pair%%:*}")" ]; then
+            SHA256="$(pin "${pair##*:}")"
+            if [ -z "$SHA256" ]; then
+                echo "::error::${pair##*:} is missing from .github/versions.env -- refusing to build $FLAVOR $VERSION unverified." >&2
+                exit 1
+            fi
+            break
+        fi
+    done
+    caller_version="${!PRIMARY_KEY:-}"
+    if [ "$SHA256" = "-" ] && [ -n "$caller_version" ] && [ "$VERSION" = "$caller_version" ]; then
+        echo "::error::caller's $PRIMARY_KEY ($caller_version) does not match .github/versions.env's pin ($(pin "$PRIMARY_KEY")) -- refusing to build $FLAVOR unverified. Update the caller's $PRIMARY_KEY to match versions.env." >&2
         exit 1
     fi
-    # else: VERSION differs from both the pin and any caller env -- a
-    # deliberate one-off build (e.g. ci-deep's ad-hoc versions), unverified
-    # exactly as before this change.
 fi
-if [ "$SHA256" != "-" ] && [ -f "$MODULE_DIR/.github/scripts/fetch-verify.sh" ]; then
+if [ "$SHA256" != "-" ]; then
     bash "$MODULE_DIR/.github/scripts/fetch-verify.sh" "$URL" "$SHA256" "$ROOT/${DIR}.tar.gz"
 elif [ ! -f "$ROOT/${DIR}.tar.gz" ]; then
-    curl -fsSL "$URL" -o "$ROOT/${DIR}.tar.gz"
+    # Unpinned one-off build. --retry-all-errors: plain --retry skips TLS and
+    # connection resets (curl 35/56), which is exactly how a flaky mirror fails.
+    curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+        --connect-timeout 30 --max-time 300 "$URL" -o "$ROOT/${DIR}.tar.gz"
 fi
 if [ ! -d "$ROOT/$DIR" ]; then
     # The archive's own top-level dir is unsuffixed ("nginx-<ver>/"), so a
@@ -88,11 +107,11 @@ if [ ! -d "$ROOT/$DIR" ]; then
     # instead of this one, defeating the whole point of a separate tree.
     UNSUFFIXED_DIR="${FLAVOR}-${VERSION}"
     if [ "$DIR" != "$UNSUFFIXED_DIR" ]; then
-        rm -rf "$ROOT/${UNSUFFIXED_DIR:?}.extract-tmp"
+        rm -rf "${ROOT:?}/${UNSUFFIXED_DIR:?}.extract-tmp"
         mkdir -p "$ROOT/${UNSUFFIXED_DIR}.extract-tmp"
         tar -xzf "$ROOT/${DIR}.tar.gz" -C "$ROOT/${UNSUFFIXED_DIR}.extract-tmp"
         mv "$ROOT/${UNSUFFIXED_DIR}.extract-tmp/${UNSUFFIXED_DIR}" "$ROOT/$DIR"
-        rm -rf "$ROOT/${UNSUFFIXED_DIR}.extract-tmp"
+        rm -rf "${ROOT:?}/${UNSUFFIXED_DIR:?}.extract-tmp"
     else
         tar -xzf "$ROOT/${DIR}.tar.gz" -C "$ROOT"
     fi

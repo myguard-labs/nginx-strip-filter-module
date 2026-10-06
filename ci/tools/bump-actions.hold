@@ -1,0 +1,14 @@
+# Actions that ci/tools/bump-actions.sh must NOT move unattended.
+#
+# One entry per line: `owner/repo  reason`. Blank lines and `#` comments are
+# ignored. A held pin is reported as a `note: held ...` line on every bump run,
+# so it cannot be forgotten silently.
+#
+# Hold an action when something outside this repo pins its exact sha, so a
+# bump PR would be rejected before any job runs instead of being reviewed.
+# Remove the entry once that external pin moves.
+
+# The repo and org Actions "allowed actions" policy lists this action by exact
+# sha (msys2/setup-msys2@66cd2cce...). Any other sha makes windows-build.yml a
+# startup_failure. Move the policy entry and this pin together, by hand.
+msys2/setup-msys2  allowed-actions policy pins the exact sha

@@ -25,6 +25,12 @@
 # resolves the newest release WITHIN the pinned major (v5 -> newest v5.x) and
 # reports a waiting major bump as a note for a human to do deliberately.
 #
+# HELD ACTIONS
+#
+# ci/tools/bump-actions.hold lists actions whose exact sha is pinned somewhere
+# this script cannot edit (the Actions allowed-actions policy). They are skipped
+# and reported as `note: held ...`; see that file for the format.
+#
 # Requires: gh (authenticated), git. Network: api.github.com.
 
 set -euo pipefail
@@ -49,13 +55,33 @@ FAILED=0
 # major lines in use at once, which must resolve independently.
 declare -A RESOLVED_SHA RESOLVED_TAG
 
+declare -A HELD
+HOLD_FILE="ci/tools/bump-actions.hold"
+if [ -f "$HOLD_FILE" ]; then
+    # `|| [ -n ... ]`: read fails on a last line with no newline but still
+    # fills the variables; without it that entry would silently be bumped.
+    while read -r held_repo held_reason || [ -n "${held_repo:-}" ]; do
+        case "$held_repo" in "" | "#"*) continue ;; esac
+        HELD[$held_repo]="${held_reason:-no reason given}"
+    done < "$HOLD_FILE"
+fi
+
 # Collect every distinct owner/repo@sha # tag triple across .github/.
 # `uses:` values may carry a subpath (github/codeql-action/init), which is NOT
 # part of the repo for API purposes -- strip it to the first two segments.
-mapfile -t PINS < <(
-    grep -rhoE 'uses: [^ ]+@[0-9a-f]{40} # [^ ]+' .github/ \
-        | sed -E 's/^uses: //' | sort -u
-)
+# Captured, not read through `< <(...)`: process substitution drops the
+# producer's exit status, so an unreadable .github/ file would leave a
+# truncated list that bumps only the pins grep reached. grep exits 1 for "no
+# match" (handled below) and 2 for an error (fatal).
+scan_rc=0
+pins_raw="$(grep -rhoE 'uses: [^ ]+@[0-9a-f]{40} # [^ ]+' .github/ \
+    | sed -E 's/^uses: //' | sort -u)" || scan_rc=$?
+if [ "$scan_rc" -gt 1 ]; then
+    echo "FATAL: scanning .github/ for action pins failed (rc=$scan_rc)" >&2
+    exit 1
+fi
+PINS=()
+[ -z "$pins_raw" ] || mapfile -t PINS <<<"$pins_raw"
 
 if [ "${#PINS[@]}" -eq 0 ]; then
     echo "no sha-pinned actions found"
@@ -73,6 +99,11 @@ for pin in "${PINS[@]}"; do
     major="$(printf '%s' "$tag" | sed -E 's/^v?([0-9]+).*/\1/')"
     if ! printf '%s' "$major" | grep -qE '^[0-9]+$'; then
         NOTES+=("skip $path: tag '$tag' has no numeric major")
+        continue
+    fi
+
+    if [ -n "${HELD[$repo]:-}" ]; then
+        NOTES+=("held $path at ${sha:0:12} ($tag): ${HELD[$repo]}")
         continue
     fi
 
